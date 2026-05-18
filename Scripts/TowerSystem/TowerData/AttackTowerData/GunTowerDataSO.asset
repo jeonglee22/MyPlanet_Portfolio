@@ -1,0 +1,31 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f393b03df1280264f80673f7546c2fa3, type: 3}
+  m_Name: GunTowerDataSO
+  m_EditorClassIdentifier: 
+  towerIdInt: 1000001
+  towerId: "\uAD8C\uCD1D \uD0C0\uC6CC"
+  fireType: 0
+  fireRate: 2.5
+  rangeData: {fileID: 11400000, guid: 4e74692171eec9f47aaba9f61037aeb2, type: 2}
+  Accuracy: 90
+  grouping: 0
+  projectileCount: 1
+  projectileIdFromTable: 1100001
+  randomAbilityGroupId: 201001
+  targetPriority: {fileID: 11400000, guid: c6675dc07f4d21445ac9cca7c57c7a82, type: 2}
+  projectilePrefab: {fileID: 5687393119444658962, guid: 46c28538ad25229448c96f963c8b7f8d, type: 3}
+  shootSfx: {fileID: 8300000, guid: c79951a5e6847194f96ab3b03033f8ac, type: 3}
+  laserLoopSfx: {fileID: 8300000, guid: 10d985658ad886844bbd8f5ce9e35965, type: 3}
+  shootVolume: 1
+  laserLoopVolume: 1
+  shootPitchRange: {x: 1, y: 1}

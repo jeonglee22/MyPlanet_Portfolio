@@ -1,0 +1,763 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using UnityEngine;
+
+[System.Flags]
+public enum AmpTargetFlags
+{
+    None = 0,
+    BaseBuff = 1,       
+    RandomAbility = 2    
+}
+
+public class TowerAmplifier : MonoBehaviour
+{
+    [SerializeField] private AmplifierTowerDataSO amplifierTowerData;
+    public AmplifierTowerDataSO AmplifierTowerData => amplifierTowerData;
+
+    private readonly List<TowerAttack> buffedTargets = new List<TowerAttack>();
+    public bool HasAppliedBaseBuffs => buffedTargets.Count > 0;
+
+    private readonly List<int> buffedSlotIndex = new List<int>();
+
+    //Unity buff-------------------------------------------------------
+    private readonly Dictionary<int, AmpTargetFlags> targetFlagsBySlot = new();
+    public IReadOnlyCollection<int> TargetSlots => targetFlagsBySlot.Keys;
+    //only UI
+    public IReadOnlyList<int> BuffedSlotIndex => buffedSlotIndex;
+    public event Action OnBuffTargetsChanged;
+
+    private readonly List<int> randomAbilitySlotIndex = new List<int>();
+    public IReadOnlyList<int> RandomAbilitySlotIndex => randomAbilitySlotIndex;
+    //-----------------------------------------------------------------
+
+    private int selfIndex;
+    public int SelfIndex => selfIndex;
+    private Planet planet;
+
+    private List<int> abilities = new List<int>();
+    public List<int> Abilities => abilities;
+
+    private struct AppliedAbilityInfo
+    {
+        public int Count;
+        public float TotalAmountApplied;
+    }
+    private readonly Dictionary<TowerAttack, Dictionary<int, AppliedAbilityInfo>> appliedAbilityMap
+       = new Dictionary<TowerAttack, Dictionary<int, AppliedAbilityInfo>>();
+    public bool HasAppliedRandomAbilities => appliedAbilityMap.Count > 0;
+
+    //Reinforce Field --------------------------------------
+    [Header("Reinforce (Buff Tower)")]
+    [SerializeField] private int reinforceLevel = 0;
+    public int ReinforceLevel => reinforceLevel;
+
+    [SerializeField] private float reinforceScale = 1f;
+
+    private AmplifierTowerDataSO baseAmpData;
+    private AmplifierTowerDataSO runtimeAmpData;
+    //------------------------------------------------------
+    public void AddAbility(int ability)
+    {
+        abilities.Add(ability);
+    }
+
+    public void SetData(AmplifierTowerDataSO data)
+    {
+        baseAmpData = data;
+
+        if (baseAmpData == null)
+        {
+            runtimeAmpData = null;
+            amplifierTowerData = null;
+            return;
+        }
+        runtimeAmpData = ScriptableObject.Instantiate(baseAmpData);
+        amplifierTowerData = runtimeAmpData;
+        RecalculateReinforceBuff();
+    }
+
+    public void SetReinforceLevel(int newLevel)
+    {
+        newLevel = Mathf.Max(0, newLevel);
+        if (newLevel == reinforceLevel) return;
+        reinforceLevel = newLevel;
+
+        RecalculateReinforceBuff();
+
+        foreach (var t in buffedTargets)
+        {
+            if (t == null) continue;
+            t.RecalculateAmplifierBuffs();
+        }
+        RefreshAppliedRandomAbilitiesForAllTargets();
+        OnBuffTargetsChanged?.Invoke();
+    }
+
+    private void RecalculateReinforceBuff()
+    {
+        if (!DataTableManager.IsInitialized) return;
+
+        if (baseAmpData == null || runtimeAmpData == null) return;
+
+        //base
+        runtimeAmpData.RefreshFromTables();
+        if (reinforceLevel <= 0) return;
+
+        //Reinforce
+        //get id
+        int[] reinforceIds = runtimeAmpData.BuffTowerReinforceUpgrade_ID;
+        if (reinforceIds == null || reinforceIds.Length == 0) return;
+
+        //get add value
+        var extraEffects =
+            TowerReinforceManager.GetBuffAddValuesByIdsStatic(reinforceIds, reinforceLevel);
+
+        if (extraEffects == null || extraEffects.Count == 0) return;
+
+        //add Reinforce Data
+        runtimeAmpData.ApplyReinforceEffects(extraEffects, reinforceScale);
+    }
+
+    public void ApplyBuff(TowerAttack target, int slotIndex)
+    {
+        if (target == null) return;
+        if (amplifierTowerData == null) return;
+
+        bool isTargetSlot = buffedSlotIndex.Contains(slotIndex);
+        if (!isTargetSlot) return;
+
+        target.AddAmplifierBuff(amplifierTowerData);
+        if (!buffedTargets.Contains(target))
+            buffedTargets.Add(target);
+
+        if (abilities.Count > 0)
+        {
+            foreach (var abilityId in abilities)
+                ApplyRandomAbilityToTarget(target, abilityId);
+        }
+        OnBuffTargetsChanged?.Invoke();
+    }
+
+    private void ApplyRandomAbilityToTarget(TowerAttack target, int abilityId)
+    {
+        if (target == null) return;
+        if (abilityId <= 0) return;
+        if (!AbilityManager.IsInitialized) return;
+        if (TowerReinforceManager.Instance == null) return;
+
+        if (!appliedAbilityMap.TryGetValue(target, out var dict))
+        {
+            dict = new Dictionary<int, AppliedAbilityInfo>();
+            appliedAbilityMap[target] = dict;
+        }
+
+        dict.TryGetValue(abilityId, out var info);
+        target.AddAmplifierAbility(this, abilityId);
+
+        if (info.Count > 0)
+            RemoveAbilityInstancesFromTower(target, abilityId, info.Count);
+
+        info.Count += 1;
+        ApplyAbilityInstancesToTower(target, abilityId, info.Count);
+
+        float perStack = TowerReinforceManager.Instance.GetFinalPrimaryValueForAbility(abilityId, reinforceLevel);
+        info.TotalAmountApplied = perStack * info.Count;
+
+        dict[abilityId] = info;
+    }
+
+
+    public void RemoveBuff(TowerAttack target) //single target (destory target tower)
+    {
+        if (target == null) return;
+
+        //Remove All Buff In Slot
+        if (appliedAbilityMap.TryGetValue(target, out var dict))
+        {
+            foreach (var kv in dict)
+            {
+                int abilityId = kv.Key;
+                var info= kv.Value;
+                RemoveAbilityInstancesFromTower(target, abilityId, info.Count);
+                target.RemoveAmplifierAbility(this, abilityId, info.Count);
+            }
+            appliedAbilityMap.Remove(target);
+        }
+        if (buffedTargets.Contains(target))
+        {
+            buffedTargets.Remove(target);
+            target.RemoveAmplifierBuff(amplifierTowerData);
+        }
+        OnBuffTargetsChanged?.Invoke();
+    }
+
+    public void ClearAllbuffs()//(Destory Buff Tower)
+    {
+        foreach (var kvTarget in appliedAbilityMap)
+        {
+            var target = kvTarget.Key;
+            if (target == null) continue;
+
+            var dict = kvTarget.Value;
+            foreach (var kv in dict)
+            {
+                int abilityId = kv.Key;
+                var info = kv.Value;
+                RemoveAbilityInstancesFromTower(target, abilityId, info.Count);
+                target.RemoveAmplifierAbility(this, abilityId, info.Count);
+            }
+        }
+        appliedAbilityMap.Clear();
+
+        foreach (var target in buffedTargets)
+        {
+            if (target == null) continue;
+            target.RemoveAmplifierBuff(amplifierTowerData);
+        }
+        buffedTargets.Clear();
+        OnBuffTargetsChanged?.Invoke();
+    }
+
+    private void OnDestroy()
+    {
+        ClearAllbuffs();
+    }
+
+    private void RefreshAppliedRandomAbilitiesForAllTargets()
+    {
+        if (!AbilityManager.IsInitialized) return;
+        if (TowerReinforceManager.Instance == null) return;
+
+        var targets = new List<TowerAttack>(appliedAbilityMap.Keys);
+        foreach (var t in targets)
+        {
+            if (t == null) continue;
+            if (!appliedAbilityMap.TryGetValue(t, out var dict)) continue;
+
+            var abilityIds = new List<int>(dict.Keys);
+            foreach (var abilityId in abilityIds)
+            {
+                var info = dict[abilityId];
+                RemoveAbilityInstancesFromTower(t, abilityId, info.Count);
+                ApplyAbilityInstancesToTower(t, abilityId, info.Count);
+
+                float perStack = TowerReinforceManager.Instance.GetFinalPrimaryValueForAbility(abilityId, reinforceLevel);
+                info.TotalAmountApplied = perStack * info.Count;
+                dict[abilityId] = info;
+            }
+        }
+    }
+
+    private void ApplyAbilityInstanceToTower(TowerAttack target, int abilityId, float totalAmount)
+    {
+        target.ApplyAmplifierAbilityReinforce(this, abilityId, reinforceLevel);
+    }
+
+    private void RemoveAbilityInstanceFromTower(TowerAttack target, int abilityId, float totalAmount)
+    {
+        target.RemoveAmplifierAbilityReinforced(this, abilityId, 1);
+    }
+
+    internal void AddAmpTower(
+        AmplifierTowerDataSO ampData, 
+        int index, 
+        Planet planet,
+        int randomAbilityId,
+        int[] presetBuffSlots=null,
+        int[] presetRandomSlots = null
+        )
+    {
+        if (ampData == null || planet == null) return;
+
+        ClearAllbuffs();
+        selfIndex = index;
+        this.planet = planet;
+        SetData(ampData);
+
+        abilities.Clear();
+        if (randomAbilityId > 0) abilities.Add(randomAbilityId);
+ 
+        int towerCount = planet.TowerCount;
+        if (towerCount <= 0) return;
+
+        buffedSlotIndex.Clear();
+        randomAbilitySlotIndex.Clear();
+
+        //Candidate Buffed Tower: Attack Tower-------------------
+        List<int> buffAbleTowers = new List<int>();
+
+        for (int i = 0; i < towerCount; i++)
+        {
+            if (i == selfIndex) continue;
+            buffAbleTowers.Add(i);
+        }
+        if (buffAbleTowers.Count == 0) return;
+        //--------------------------------------------------------
+
+        //Filtered by Target Mode (Random || LeftIndex)-----------
+        List<int> filteredBuffTowers = new List<int>();
+
+        switch (ampData.TargetMode)
+        {
+            case AmplifierTargetMode.RandomSlots:
+                {
+                    //Card Random Pick
+                    if(presetBuffSlots != null && presetBuffSlots.Length > 0)
+                    {
+                        for (int i = 0; i < presetBuffSlots.Length; i++)
+                        {
+                            int offset = presetBuffSlots[i];
+                            int targetIndex = selfIndex + offset;
+                            targetIndex %= towerCount;
+                            if (targetIndex < 0)
+                                targetIndex += towerCount;
+
+                            if (targetIndex == selfIndex) continue;
+                            if (!filteredBuffTowers.Contains(targetIndex))
+                            {
+                                filteredBuffTowers.Add(targetIndex);
+                            }
+                        }
+                    }
+                    //No preset or no choose
+                    if (filteredBuffTowers.Count == 0 && buffAbleTowers.Count > 0)
+                    {
+                        int finalBuffedSlotCount = Mathf.Min(
+                            ampData.FixedBuffedSlotCount,
+                            buffAbleTowers.Count
+                        );
+                        for (int n = 0; n < finalBuffedSlotCount; n++)
+                        {
+                            int randIndex = UnityEngine.Random.Range(0, buffAbleTowers.Count);
+                            int slotIndex = buffAbleTowers[randIndex];
+                            filteredBuffTowers.Add(slotIndex);
+                            buffAbleTowers.RemoveAt(randIndex);
+                        }
+                    }
+                    break;
+                }
+            case AmplifierTargetMode.LeftNeighbor:
+                {
+                    int leftIndex = (selfIndex - 1 + towerCount) % towerCount;
+                    if(buffAbleTowers.Contains(leftIndex)) filteredBuffTowers.Add(leftIndex);
+                    break;
+                }
+        }
+        //--------------------------------------------------------
+        if (filteredBuffTowers.Count == 0) return;
+
+        //Remember Buffed Slots
+        buffedSlotIndex.AddRange(filteredBuffTowers);
+        randomAbilitySlotIndex.AddRange(filteredBuffTowers);
+
+        foreach (int slotIndex in buffedSlotIndex)
+        {
+            var attackTower = planet.GetAttackTowerToAmpTower(slotIndex);
+            if (attackTower == null) continue;
+            ApplyBuff(attackTower, slotIndex);
+        }
+
+        targetFlagsBySlot.Clear();
+
+        foreach (var t in buffedSlotIndex)
+            targetFlagsBySlot[t] = AmpTargetFlags.BaseBuff | AmpTargetFlags.RandomAbility;
+
+        OnBuffTargetsChanged?.Invoke();
+        Debug.Log($"[Amplifier] My abilities: {string.Join(", ", abilities)}");
+    }
+    public void ApplyBuffForNewTower(int slotIndex, TowerAttack newTower)
+    {
+        if (newTower == null) return;
+        if (AmplifierTowerData == null) return;
+        if (!buffedSlotIndex.Contains(slotIndex)) return;
+
+        ApplyBuff(newTower, slotIndex);
+    }
+
+    //Move Tower
+    public void RebuildSlotsForNewIndex(int newSelfIndex, int towerCount)
+    {
+        bool hasBuff = buffedSlotIndex != null && buffedSlotIndex.Count > 0;
+        bool hasRandom = randomAbilitySlotIndex != null && randomAbilitySlotIndex.Count > 0;
+
+        if (!hasBuff && !hasRandom)
+        {
+            selfIndex = newSelfIndex;
+            return;
+        }
+
+        int oldSelf = selfIndex;
+        List<int> buffOffsets = null;
+
+        if (hasBuff)
+        {
+            buffOffsets = new List<int>(buffedSlotIndex.Count);
+            foreach (var s in buffedSlotIndex)
+            {
+                int offset = s - oldSelf;
+                buffOffsets.Add(offset);
+            }
+        }
+
+        List<int> randomOffsets = null;
+        if (hasRandom)
+        {
+            randomOffsets = new List<int>(randomAbilitySlotIndex.Count);
+            foreach (var s in randomAbilitySlotIndex)
+            {
+                int offset = s - oldSelf;
+                randomOffsets.Add(offset);
+            }
+        }
+
+        ClearAllbuffs();
+        selfIndex = newSelfIndex;
+        buffedSlotIndex.Clear();
+        randomAbilitySlotIndex.Clear();
+
+        if (buffOffsets != null)
+        {
+            foreach (var offset in buffOffsets)
+            {
+                int target = newSelfIndex + offset;
+                target %= towerCount;
+                if (target < 0) target += towerCount;
+                if (target == newSelfIndex) continue;
+                if (!buffedSlotIndex.Contains(target))
+                    buffedSlotIndex.Add(target);
+            }
+        }
+
+        if (randomOffsets != null)
+        {
+            foreach (var offset in randomOffsets)
+            {
+                int target = newSelfIndex + offset;
+
+                target %= towerCount;
+                if (target < 0) target += towerCount;
+                if (target == newSelfIndex) continue;
+                if (!randomAbilitySlotIndex.Contains(target))
+                    randomAbilitySlotIndex.Add(target);
+            }
+        }
+
+        if (planet == null) return;
+
+        foreach (int slotIndex in buffedSlotIndex)
+        {
+            var attackTower = planet.GetAttackTowerToAmpTower(slotIndex);
+            if (attackTower == null) continue;
+
+            ApplyBuff(attackTower, slotIndex);
+        }
+
+        foreach (int slotIndex in randomAbilitySlotIndex)
+        {
+            if (buffedSlotIndex.Contains(slotIndex)) continue;
+
+            var attackTower = planet.GetAttackTowerToAmpTower(slotIndex);
+            if (attackTower == null) continue;
+
+            ApplyBuff(attackTower, slotIndex);
+        }
+    }
+
+    public void ResetLocalBuffStateOnly()
+    {
+        foreach (var t in buffedTargets)
+        {
+            if (t == null) continue;
+            t.RemoveAmplifierBuff(AmplifierTowerData);
+            t.ClearAllAmplifierAbilitiesFrom(this);
+            t.ClearAmplifierAbilitiesFromSource(this);
+        }
+        buffedTargets.Clear();
+        buffedSlotIndex.Clear();       
+        randomAbilitySlotIndex.Clear();  
+        appliedAbilityMap.Clear(); 
+        OnBuffTargetsChanged?.Invoke();
+    }
+
+    private IAbility CreateAbilityInstanceWithReinforce(int abilityId)
+    {
+        var ability = AbilityManager.GetAbility(abilityId);
+        if (ability == null) return null;
+        float finalPrimary = TowerReinforceManager.Instance.
+            GetFinalPrimaryValueForAbility(abilityId, reinforceLevel);
+
+        float delta = finalPrimary - ability.UpgradeAmount;
+        if (!Mathf.Approximately(delta, 0f))
+            ability.StackAbility(delta);
+        
+        return ability;
+    }
+
+    public void RebuildSlotIndicesOnly(int newSelfIndex, int towerCount)
+    {
+        bool hasBuff = buffedSlotIndex != null && buffedSlotIndex.Count > 0;
+
+        if (!hasBuff)
+        {
+            selfIndex = newSelfIndex;
+            return;
+        }
+
+        int oldSelf = selfIndex;
+
+        List<int> buffOffsets = new List<int>(buffedSlotIndex.Count);
+        foreach (var s in buffedSlotIndex)
+            buffOffsets.Add(s - oldSelf);
+
+        ClearAllbuffs();
+
+        appliedAbilityMap.Clear();
+
+        selfIndex = newSelfIndex;
+        buffedSlotIndex.Clear();
+        randomAbilitySlotIndex.Clear();
+
+        foreach (var offset in buffOffsets)
+        {
+            int target = newSelfIndex + offset;
+            target %= towerCount;
+            if (target < 0) target += towerCount;
+            if (target == newSelfIndex) continue;
+            if (!buffedSlotIndex.Contains(target))
+                buffedSlotIndex.Add(target);
+        }
+        randomAbilitySlotIndex.AddRange(buffedSlotIndex);
+    }
+
+    public void AddAbilityAndApplyToCurrentTargets(int abilityId)
+    {
+        if (abilityId <= 0) return; 
+        if (abilities == null) return;
+
+        if (!DataTableManager.IsInitialized) return;
+        var abilityData = DataTableManager.RandomAbilityTable?.Get(abilityId);
+        if (abilityData == null) return;
+        if (abilityData.DuplicateType == 1 && abilities.Contains(abilityId)) return;
+
+        abilities.Add(abilityId);
+
+        if (planet == null) return;
+        if (buffedSlotIndex == null || buffedSlotIndex.Count == 0) return;
+
+        for (int i = 0; i < buffedSlotIndex.Count; i++) 
+        {
+            int slotIndex = buffedSlotIndex[i];
+
+            var target = planet.GetAttackTowerToAmpTower(slotIndex);
+            if (target == null) continue;
+            ApplyRandomAbilityToTarget(target, abilityId);
+        }
+        OnBuffTargetsChanged?.Invoke();
+        Debug.Log($"[Amplifier] abilities count: {abilities.Count}, Split count: {abilities.Count(x => x == (int)AbilityId.Split)}");
+    }
+    public string GetDebugInfo()
+    {
+        StringBuilder sb = new StringBuilder();
+
+        sb.AppendLine($"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+        if (amplifierTowerData != null)
+        {
+            sb.AppendLine($"증폭 타워 타입: {amplifierTowerData.name}");
+        }
+        else
+        {
+            sb.AppendLine($"증폭 타워 (데이터 없음)");
+        }
+
+        sb.AppendLine($"강화 레벨: {reinforceLevel}");
+        sb.AppendLine($"자체 슬롯 인덱스: {selfIndex}");
+        sb.AppendLine($"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        // 버프 제공 정보
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        sb.AppendLine();
+        sb.AppendLine("버프 제공 (BUFF TARGETS)");
+
+        if (buffedSlotIndex != null && buffedSlotIndex.Count > 0)
+        {
+            sb.AppendLine($"  버프 대상 슬롯: {string.Join(", ", buffedSlotIndex)}");
+            sb.AppendLine($"  대상 개수: {buffedSlotIndex.Count}개");
+        }
+        else
+        {
+            sb.AppendLine($"  버프 대상: 없음");
+        }
+
+        // 버프 내용
+        if (amplifierTowerData != null)
+        {
+            sb.AppendLine();
+            sb.AppendLine("  [제공하는 버프 내용]");
+
+            if (!Mathf.Approximately(amplifierTowerData.DamageBuff, 0f))
+            {
+                float percent = amplifierTowerData.DamageBuff * 100f;
+                sb.AppendLine($"공격력:        {percent:+F1}%");
+            }
+
+            if (!Mathf.Approximately(amplifierTowerData.FireRateBuff, 1f))
+            {
+                float percent = (amplifierTowerData.FireRateBuff - 1f) * 100f;
+                sb.AppendLine($"공격속도:      {percent:+F1}%");
+            }
+
+            if (!Mathf.Approximately(amplifierTowerData.AccelerationBuff, 0f))
+            {
+                sb.AppendLine($"투사체 가속:   +{amplifierTowerData.AccelerationBuff:F2}");
+            }
+
+            if (amplifierTowerData.ProjectileCountBuff > 0)
+            {
+                sb.AppendLine($"투사체 개수:   +{amplifierTowerData.ProjectileCountBuff}");
+            }
+
+            if (!Mathf.Approximately(amplifierTowerData.HitRadiusBuff, 0f))
+            {
+                sb.AppendLine($"    ? 히트 반경:     {amplifierTowerData.HitRadiusBuff:+F1}%");
+            }
+
+            if (!Mathf.Approximately(amplifierTowerData.PercentPenetrationBuff, 0f))
+            {
+                float percent = amplifierTowerData.PercentPenetrationBuff * 100f;
+                sb.AppendLine($"    ? 퍼센트 관통:   {percent:+F1}%");
+            }
+
+            if (!Mathf.Approximately(amplifierTowerData.FixedPenetrationBuff, 0f))
+            {
+                sb.AppendLine($"    ? 고정 관통:     +{amplifierTowerData.FixedPenetrationBuff:F1}");
+            }
+
+            if (amplifierTowerData.TargetNumberBuff > 0)
+            {
+                sb.AppendLine($"    ? 타겟 개수:     +{amplifierTowerData.TargetNumberBuff}");
+            }
+
+            if (!Mathf.Approximately(amplifierTowerData.HitRateBuff, 0f))
+            {
+                sb.AppendLine($"    ? 명중률:        {amplifierTowerData.HitRateBuff:+F1}%");
+            }
+        }
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        // 어빌리티 정보
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        sb.AppendLine();
+        sb.AppendLine("? 랜덤 어빌리티 (RANDOM ABILITIES)");
+
+        if (abilities != null && abilities.Count > 0)
+        {
+            sb.AppendLine($"  보유 어빌리티: {abilities.Count}개");
+
+            if (randomAbilitySlotIndex != null && randomAbilitySlotIndex.Count > 0)
+            {
+                sb.AppendLine($"  적용 대상 슬롯: {string.Join(", ", randomAbilitySlotIndex)}");
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("  [어빌리티 목록]");
+            foreach (var abilityId in abilities)
+            {
+                var abilityData = DataTableManager.RandomAbilityTable?.Get(abilityId);
+                string abilityName = abilityData != null ? abilityData.RandomAbilityName : $"ID:{abilityId}";
+                float abilityValue = abilityData != null ? abilityData.SpecialEffectValue : 0f;
+
+                sb.AppendLine($"    ? {abilityName}");
+                sb.AppendLine($"      - ID: {abilityId}");
+                sb.AppendLine($"      - 값: {abilityValue}");
+            }
+        }
+        else
+        {
+            sb.AppendLine($"  랜덤 어빌리티: 없음");
+        }
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        // 실제 적용 상태
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        sb.AppendLine();
+        sb.AppendLine("?? 적용 상태 (APPLICATION STATUS)");
+
+        int buffedCount = buffedTargets != null ? buffedTargets.Count : 0;
+        sb.AppendLine($"  기본 버프 적용된 타워: {buffedCount}개");
+
+        int abilityTargetCount = appliedAbilityMap != null ? appliedAbilityMap.Count : 0;
+        sb.AppendLine($"  랜덤 어빌리티 적용된 타워: {abilityTargetCount}개");
+
+        if (appliedAbilityMap != null && appliedAbilityMap.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("  [어빌리티 적용 상세]");
+            foreach (var kv in appliedAbilityMap)
+            {
+                var target = kv.Key;
+                var abilityDict = kv.Value;
+
+                if (target == null) continue;
+
+                // 타겟 타워의 슬롯 인덱스 찾기
+                int targetSlot = -1;
+                if (planet != null)
+                {
+                    for (int i = 0; i < planet.TowerCount; i++)
+                    {
+                        var tower = planet.GetAttackTowerToAmpTower(i);
+                        if (tower == target)
+                        {
+                            targetSlot = i;
+                            break;
+                        }
+                    }
+                }
+
+                sb.AppendLine($"    ? 타겟 슬롯 {targetSlot}:");
+
+                if (abilityDict != null)
+                {
+                    foreach (var abKv in abilityDict)
+                    {
+                        int abilityId = abKv.Key;
+                        var info = abKv.Value;
+
+                        var abilityData = DataTableManager.RandomAbilityTable?.Get(abilityId);
+                        string abilityName = abilityData != null ? abilityData.RandomAbilityName : $"ID:{abilityId}";
+
+                        sb.AppendLine($"      - {abilityName}: 스택 {info.Count}개, 총량 {info.TotalAmountApplied:F2}");
+                    }
+                }
+            }
+        }
+
+        sb.AppendLine($"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+        return sb.ToString();
+
+    }
+    private void ApplyAbilityInstancesToTower(TowerAttack target, int abilityId, int count)
+    {
+        if (target == null) return;
+        if (count <= 0) return;
+
+        for (int i = 0; i < count; i++)
+            target.ApplyAmplifierAbilityReinforce(this, abilityId, reinforceLevel);
+    }
+
+    private void RemoveAbilityInstancesFromTower(TowerAttack target, int abilityId, int count)
+    {
+        if (target == null) return;
+        if (count <= 0) return;
+
+        target.RemoveAmplifierAbilityReinforced(this, abilityId, count);
+    }
+
+
+}

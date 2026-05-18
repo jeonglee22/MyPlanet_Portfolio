@@ -1,0 +1,1460 @@
+using System;
+using System.Collections.Generic;
+using System.Text;
+using TMPro;
+using Unity.VisualScripting;
+using UnityEngine;
+using UnityEngine.InputSystem;
+using UnityEngine.UI;
+
+public class TowerInfoUI : MonoBehaviour
+{
+    [SerializeField] private TowerInstallControl installControl;
+    
+    //TowerNameInfo
+    [SerializeField] private TextMeshProUGUI attackTowerNameText;
+    [SerializeField] private TextMeshProUGUI amplifierNameText;
+    [SerializeField] private TextMeshProUGUI attackTowerExplainText;
+    [SerializeField] private TextMeshProUGUI amplifierExplainText;
+    [SerializeField] private Image towerImage;
+    [SerializeField] private Image amplifierImage;
+    [SerializeField] private TextMeshProUGUI checkText;
+    [SerializeField] private TextMeshProUGUI topBannerNameText;
+    [SerializeField] private GameObject cancelButton;
+    [SerializeField] private Button confirmButton;
+
+    [Header("Switch Data Panel")]
+    [SerializeField] private GameObject attackTowerDataPanel;
+    [SerializeField] private GameObject buffTowerDataPanel;
+
+    [Header("Buff Tower Text")]
+    [SerializeField] private TextMeshProUGUI buffSlotInfoText;  
+    [SerializeField] private TextMeshProUGUI randomSlotInfoText;
+    [SerializeField] private RectTransform basicEffectListRoot; 
+    [SerializeField] private RectTransform randomEffectListRoot;
+    [SerializeField] private GameObject effectLinePrefab;
+
+    [Header("Attack Tower Buffed Data")]
+    [SerializeField] private TextMeshProUGUI damageValueText;
+    [SerializeField] private TextMeshProUGUI fireRateValueText;
+    [SerializeField] private TextMeshProUGUI fixedPenetrationValueText;
+    [SerializeField] private TextMeshProUGUI percentPenetrationValueText;
+    [SerializeField] private TextMeshProUGUI hitRateValueText;
+    [SerializeField] private TextMeshProUGUI spreadAccuracyValueText;
+
+    //ADD VALUE
+    [SerializeField] private TextMeshProUGUI targetNumberValueText;
+    [SerializeField] private TextMeshProUGUI projectileNumberValueText;
+    [SerializeField] private TextMeshProUGUI lifeTimeValueText;
+    [SerializeField] private TextMeshProUGUI projectileSizeValueText;
+
+    [SerializeField] private TextMeshProUGUI chainValueText;
+    [SerializeField] private TextMeshProUGUI explosionValueText;
+    [SerializeField] private TextMeshProUGUI splitValueText;
+    [SerializeField] private TextMeshProUGUI pierceValueText;
+    [SerializeField] private TextMeshProUGUI hitScanValueText;
+    [SerializeField] private TextMeshProUGUI homingValueText;
+
+    [Header("Attack Tower Additional Data")]
+    [SerializeField] private TextMeshProUGUI damageValueAdditionalText;
+    [SerializeField] private TextMeshProUGUI fireRateValueAdditionalText;
+    [SerializeField] private TextMeshProUGUI fixedPenetrationValueAdditionalText;
+    [SerializeField] private TextMeshProUGUI percentPenetrationValueAdditionalText;
+    [SerializeField] private TextMeshProUGUI hitRateValueAdditionalText;
+    [SerializeField] private TextMeshProUGUI spreadAccuracyValueAdditionalText;
+
+    //ADD VALUE
+    [SerializeField] private TextMeshProUGUI targetNumberValueAdditionalText;
+    [SerializeField] private TextMeshProUGUI projectileNumberValueAdditionalText;
+    [SerializeField] private TextMeshProUGUI lifeTimeValueAdditionalText;
+
+    [SerializeField] private TextMeshProUGUI chainValueAdditionalText;
+    [SerializeField] private TextMeshProUGUI explosionValueAdditionalText;
+    [SerializeField] private TextMeshProUGUI splitValueAdditionalText;
+    [SerializeField] private TextMeshProUGUI pierceValueAdditionalText;
+    [SerializeField] private TextMeshProUGUI hitScanValueAdditionalText;
+    [SerializeField] private TextMeshProUGUI homingValueAdditionalText;
+
+    private TextMeshProUGUI rangeValueText;
+    private TextMeshProUGUI towerIdValueText;
+
+    [Header("Ability Panel")]
+    [SerializeField] private ScrollRect scrollRect;
+    [SerializeField] private GameObject abilityExplainContent;
+    private RectTransform contentRect;
+
+    [Header("Special Random Ability Panel")]
+    [SerializeField] private RectTransform specialRandomRoot;
+    [SerializeField] private GameObject specialRandomBlockPrefab;
+
+    private int infoIndex = -1;
+    public int CurrentSlotIndex => infoIndex;
+    private bool isSameTower;
+
+    [Header("Debug")]
+    [SerializeField] private bool debugDamageSource = true;
+    [SerializeField] private bool debugAmplifierSources = true;
+
+    private void OnEnable()
+    {
+        contentRect = scrollRect?.content;
+
+        if (attackTowerDataPanel != null) attackTowerDataPanel.SetActive(false);
+        if (buffTowerDataPanel != null) buffTowerDataPanel.SetActive(false);
+
+        if (installControl == null) return;
+
+        foreach (var amp in installControl.GetAllAmplifiers())
+        {
+            if (amp == null) continue;
+            amp.OnBuffTargetsChanged -= HandleBuffChanged; 
+            amp.OnBuffTargetsChanged += HandleBuffChanged;
+        }
+    }
+
+    private void OnDisable()
+    {
+        if (installControl == null) return;
+
+        foreach (var amp in installControl.GetAllAmplifiers())
+        {
+            if (amp == null) continue;
+            amp.OnBuffTargetsChanged -= HandleBuffChanged;
+        }
+    }
+
+    private void HandleBuffChanged()
+    {
+        if (gameObject.activeSelf && CurrentSlotIndex >= 0)
+        {
+            SetInfo(CurrentSlotIndex);
+        }
+    }
+
+    public void SetActiveCancelButton(bool isActive)
+    {
+        if (cancelButton != null)
+            cancelButton.SetActive(isActive);
+    }
+
+    public void SetConfirmButtonFunction(UnityEngine.Events.UnityAction action)
+    {
+        if (confirmButton != null)
+        {
+            confirmButton.onClick.RemoveAllListeners();
+            confirmButton.onClick.AddListener(action);
+        }
+    }
+
+    public void SetTitleText(string text)
+    {
+        if (topBannerNameText != null)
+            topBannerNameText.text = text;
+    }
+
+    public void SetCheckText(string text)
+    {
+        if (checkText != null)
+            checkText.text = text;
+    }
+
+    public void SetInfo(int index)
+    {
+        if (contentRect == null && scrollRect != null)
+            contentRect = scrollRect.content;
+
+        if (contentRect != null)
+            contentRect.DetachChildren();
+
+        if (installControl == null)
+        {
+            attackTowerNameText.text = "No data";
+            amplifierNameText.text = "No data";
+            SetAllText(null);
+
+            if (attackTowerDataPanel != null) attackTowerDataPanel.SetActive(false);
+            if (buffTowerDataPanel != null) buffTowerDataPanel.SetActive(false);
+
+            // var textNull = Instantiate(abilityExplainContent, contentRect);
+            // SetText(textNull.GetComponent<TextMeshProUGUI>(), "no tower");
+            return;
+        }
+
+        infoIndex = index;
+        var attackTower = installControl.GetAttackTower(index); //Attack Tower Data
+        var amplifierTower = installControl.GetAmplifierTower(index);
+
+        if (attackTower != null && attackTower.AttackTowerData != null)
+        {
+            if (attackTowerDataPanel != null) attackTowerDataPanel.SetActive(true);
+            if (buffTowerDataPanel != null) buffTowerDataPanel.SetActive(false);
+            if (debugDamageSource)
+            {
+                Debug.Log($"[TowerInfoUI][SetInfo] slot={index} towerIdInt={attackTower.AttackTowerData.towerIdInt} reinforce={attackTower.ReinforceLevel} obj={attackTower.gameObject.name}");
+            }
+
+            FillAttackTowerInfo(index, attackTower);
+            SetAbilityExplainForAttack(attackTower);
+            SetSpecialAbilityForAttackPanel(attackTower);
+
+            var attackTowerData = attackTower.AttackTowerData;
+            var towerId = attackTowerData.towerIdInt;
+            var towerImage = DataTableManager.AttackTowerTable.GetById(towerId)?.AttackTowerAsset;
+            var sprite = LoadManager.GetLoadedGameTexture(towerImage);
+            SetTowerImage(sprite);
+            return;
+        }
+
+        if (amplifierTower != null && amplifierTower.AmplifierTowerData != null)
+        {
+            if (attackTowerDataPanel != null) attackTowerDataPanel.SetActive(false);
+            if (buffTowerDataPanel != null) buffTowerDataPanel.SetActive(true);
+
+            FillAmplifierTowerInfo(index, amplifierTower);
+            SetAbilityExplainForAmplifier(amplifierTower);
+
+            var amplifierTowerData = amplifierTower.AmplifierTowerData;
+            var towerId = amplifierTowerData.BuffTowerId;
+            var towerImage = DataTableManager.BuffTowerTable.Get(towerId)?.BuffTowerAsset;
+            var sprite = LoadManager.GetLoadedGameTexture(towerImage);
+            SetAmplifierTowerImage(sprite);
+            return;
+        }
+
+        if (attackTowerNameText != null) attackTowerNameText.text = $"Empty Slot {index}";
+        if (amplifierNameText != null) amplifierNameText.text = $"Empty Slot {index}";
+        SetAllText("-");
+
+        if (attackTowerDataPanel != null) attackTowerDataPanel.SetActive(false);
+        if (buffTowerDataPanel != null) buffTowerDataPanel.SetActive(false);
+
+        // var textEmpty = Instantiate(abilityExplainContent, contentRect);
+        // SetText(textEmpty.GetComponent<TextMeshProUGUI>(), "no tower");
+    }
+
+    private float CalculateAbilityUpgradeValue(int abilityId, int count, float baseValue)
+    {
+        var ability = AbilityManager.GetAbility(abilityId);
+
+        if (count == 0 || ability == null) return baseValue;
+
+        float result = baseValue;
+
+        if (ability.AbilityType == AbilityApplyType.Rate)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                result *= ability.UpgradeAmount;
+            }
+        }
+        else if (ability.AbilityType == AbilityApplyType.Fixed)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                result += ability.UpgradeAmount;
+            }
+        }
+         
+        return result;
+    }
+
+    public void OnCloseInfoClicked()
+    {
+        if (installControl != null)
+        {
+            var method = installControl.GetType().GetMethod("ClearAllSlotHighlights",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            if (method != null)
+            {
+                method.Invoke(installControl, null);
+            }
+        }
+
+        gameObject.SetActive(false);
+        installControl.ClearAllSlotHighlights();
+    }
+
+    public void SetTowerImage(Sprite sprite)
+    {
+        if (towerImage != null)
+        {
+            towerImage.sprite = sprite;
+        }
+    }
+
+    public void SetAmplifierTowerImage(Sprite sprite)
+    {
+        if (towerImage != null)
+        {
+            amplifierImage.sprite = sprite;
+        }
+    }
+
+    private void SetText(TextMeshProUGUI tmp, string value, float buffedValue = float.MaxValue, string suffix = "")
+    {
+        if (tmp == null) return;
+
+        var sb = new System.Text.StringBuilder();
+
+        if(value != null && buffedValue != float.MaxValue)
+        {
+            sb.Append($"{buffedValue}");
+            sb.Append(suffix);
+        }
+        else
+        {
+            sb.Append(value ?? "-");
+        }
+        tmp.text = sb.ToString();
+    }
+
+    private void SetStatText(TextMeshProUGUI tmp, float baseValue, float finalValue, string format = "0.00", string suffix = "")
+    {
+        if (tmp == null) return;
+
+        bool hasBase = !Mathf.Approximately(baseValue, 0f);
+        bool hasFinal = !Mathf.Approximately(finalValue, 0f);
+
+        if (!hasBase && !hasFinal)
+        {
+            tmp.text = $"0{suffix}";
+            return;
+        }
+
+        // if (Mathf.Approximately(baseValue, finalValue))
+        // {
+        //     tmp.text = $"{baseValue.ToString(format)}{suffix}";
+        //     return;
+        // }
+        tmp.text = $"{finalValue.ToString(format)}{suffix}";
+    }
+
+    private void SetAdditionalStatText(TextMeshProUGUI tmp, float baseValue, float finalValue, string format = "0.00", string suffix = "")
+    {
+        if (tmp == null) return;
+
+        tmp.transform.parent.gameObject.SetActive(true);
+        bool hasBase = !Mathf.Approximately(baseValue, 0f);
+        bool hasFinal = !Mathf.Approximately(finalValue, 0f);
+
+        if (Mathf.Approximately(baseValue, finalValue))
+        {
+            tmp.transform.parent.gameObject.SetActive(false);
+            return;
+        }
+
+        // if (!hasBase && !hasFinal)
+        // {
+        //     tmp.text = $"0{suffix}";
+        //     return;
+        // }
+
+        float delta = finalValue - baseValue;
+        // string sign = delta > 0f ? "+" : "";
+        if (delta > 0f)
+            tmp.color = new Color(0.75f, 1f, 0.35f, 1f);
+        else
+            tmp.color = Color.red;
+        tmp.text = $"{delta.ToString(format)}{suffix}";
+    }
+
+    private void SetAllText(string value)
+    {
+        SetText(damageValueText, value);
+        SetText(fireRateValueText, value);
+        SetText(fixedPenetrationValueText, value);
+        SetText(percentPenetrationValueText, value);
+        SetText(hitRateValueText, value);
+        SetText(spreadAccuracyValueText, value);
+
+        SetText(targetNumberValueText, value);
+        SetText(projectileNumberValueText, value);
+
+        SetText(lifeTimeValueText, value);
+        SetText(projectileSizeValueText, value);
+
+        SetText(towerIdValueText, value);
+        SetText(rangeValueText, value);
+
+        SetText(chainValueText, value);
+        SetText(explosionValueText, value);
+        SetText(splitValueText, value);
+        SetText(pierceValueText, value);
+        SetText(hitScanValueText, value);
+        SetText(homingValueText, value);
+
+        SetText(damageValueAdditionalText, value);
+        SetText(fireRateValueAdditionalText, value);
+        SetText(fixedPenetrationValueAdditionalText, value);
+        SetText(percentPenetrationValueAdditionalText, value);
+        SetText(hitRateValueAdditionalText, value);
+        SetText(spreadAccuracyValueAdditionalText, value);
+
+        SetText(targetNumberValueAdditionalText, value);
+        SetText(projectileNumberValueAdditionalText, value);
+
+        SetText(lifeTimeValueAdditionalText, value);
+
+        SetText(chainValueAdditionalText, value);
+        SetText(explosionValueAdditionalText, value);
+        SetText(splitValueAdditionalText, value);
+        SetText(pierceValueAdditionalText, value);
+        SetText(hitScanValueAdditionalText, value);
+        SetText(homingValueAdditionalText, value);
+    }
+
+    private void FillAttackTowerInfo(int index, TowerAttack attackTower)
+    {
+        var attackTowerData = attackTower.AttackTowerData;
+        int level = attackTower.ReinforceLevel;
+
+        var attackTowerTextId = DataTableManager.AttackTowerTable.GetTowerTextIdById(attackTowerData.towerIdInt);
+        var towerExplainData = DataTableManager.TowerExplainTable.Get(attackTowerTextId);
+        var towerName = towerExplainData != null ? towerExplainData.TowerName : "No Name";
+        var towerDescribe = towerExplainData != null ? towerExplainData.TowerDescribe : "No Description";
+
+        if (attackTowerNameText != null) attackTowerNameText.text = $"{towerName} (Lv.{level})";
+        if (attackTowerExplainText != null) attackTowerExplainText.text = towerDescribe;
+
+        isSameTower = (infoIndex == index);
+        var abilities = attackTower.Abilities;
+
+        SetText(towerIdValueText, $"{attackTowerData.towerId} (Lv.{level})");
+
+        var baseProj = attackTower.BaseProjectileData ?? attackTowerData.projectileType;
+        var buffedProj = attackTower.BuffedProjectileData ?? baseProj;
+        if (debugDamageSource)
+        {
+            DumpAttackDamageDebug(index, attackTower, baseProj, buffedProj);
+        }
+
+        if (debugAmplifierSources)
+        {
+            DumpAmplifierDamageSources(index);
+        }
+
+        if (baseProj != null)
+        {
+            // Attack(base + ability + amp)
+            float baseDamage = baseProj.Attack;
+            float finalDamage = buffedProj.Attack;
+            SetStatText(damageValueText, baseDamage, finalDamage, "0.00");
+            SetAdditionalStatText(damageValueAdditionalText, baseDamage, finalDamage, "0.00");
+            // Fixed Penetration
+            float baseFixedPen = baseProj.FixedPenetration;
+            float finalFixedPen = buffedProj.FixedPenetration;
+            SetStatText(fixedPenetrationValueText, baseFixedPen, finalFixedPen, "0.00");
+            SetAdditionalStatText(fixedPenetrationValueAdditionalText, baseFixedPen, finalFixedPen, "0.00");
+            // Percent Penetration
+            float baseRatePen = baseProj.RatePenetration;
+            float finalRatePen = buffedProj.RatePenetration;
+            SetStatText(percentPenetrationValueText, baseRatePen, finalRatePen, "0.00", "%");
+            SetAdditionalStatText(percentPenetrationValueAdditionalText, baseRatePen, finalRatePen, "0.00");
+            // Projectile Count
+            float baseCount = attackTower.BaseProjectileCount;
+            float finalCount = attackTower.CurrentProjectileCount;
+            SetStatText(projectileNumberValueText, baseCount, finalCount, "0");
+            SetAdditionalStatText(projectileNumberValueAdditionalText, baseCount, finalCount, "0.00");
+            // Target Num
+            float baseTargets = 1f;
+            float finalTargets = 1f;
+            var ts = attackTower.TargetingSystem;
+            if(ts!=null)
+            {
+                baseTargets = ts.BaseTargetCount;
+                finalTargets = ts.MaxTargetCount;
+            }
+            SetStatText(targetNumberValueText, baseTargets, finalTargets, "0");
+            SetAdditionalStatText(targetNumberValueAdditionalText, baseTargets, finalTargets, "0.00");
+            // LifeTime
+            float baseLifeTime = baseProj.RemainTime;
+            float finalLifeTime = buffedProj.RemainTime;
+            SetStatText(lifeTimeValueText, baseLifeTime, finalLifeTime, "0.00");
+            SetAdditionalStatText(lifeTimeValueAdditionalText, baseLifeTime, finalLifeTime, "0.00");
+            // Hitbox Size
+            float baseSize = baseProj.CollisionSize;
+            float finalSize = buffedProj.CollisionSize;
+            SetStatText(projectileSizeValueText, baseSize, finalSize, "0.00");
+            // SetAdditionalStatText(projectileSizeValueAdditionalText, baseDamage, finalDamage, "0.00");
+        }
+        else
+        {
+            SetText(damageValueText, "-");
+            SetText(fixedPenetrationValueText, "-");
+            SetText(percentPenetrationValueText, "-");
+            SetText(projectileNumberValueText, "-");
+            SetText(targetNumberValueText, "-");
+            SetText(lifeTimeValueText, "-");
+            SetText(projectileSizeValueText, "-");
+        }
+        //FireRate
+        float baseFireRate = attackTower.BasicFireRate;
+        float finalFireRate = attackTower.CurrentFireRate;
+        SetStatText(fireRateValueText, baseFireRate, finalFireRate, "0.00");
+        SetAdditionalStatText(fireRateValueAdditionalText, baseFireRate, finalFireRate, "0.00");
+
+        //Hit Rate (명중률)
+        float baseHitRate = attackTowerData.Accuracy;
+        float finalHitRate = attackTower.FinalHitRate;
+        SetStatText(hitRateValueText, baseHitRate, finalHitRate, "0.00", "%");
+        SetAdditionalStatText(hitRateValueAdditionalText, baseHitRate, finalHitRate, "0.00");
+
+        if (attackTowerData.towerIdInt == (int)AttackTowerId.ShootGun)
+        {
+            //Spread Accuracy
+            float baseSpread = attackTowerData.grouping;
+            SetStatText(spreadAccuracyValueText, baseSpread, baseSpread, "0.00", "%");
+            SetAdditionalStatText(spreadAccuracyValueAdditionalText, baseSpread, baseSpread, "0.00");
+        }
+        else
+        {
+            float baseSpread = attackTowerData.grouping;
+            SetText(spreadAccuracyValueText, "-");
+            SetAdditionalStatText(spreadAccuracyValueAdditionalText, baseSpread, baseSpread, "0.00");
+        }
+        //Spread Accuracy
+        // if (spreadAccuracyValueText != null)
+        //     spreadAccuracyValueText.text = attackTowerData.grouping.ToString("0.00") + "%";
+        // if (spreadAccuracyValueAdditionalText != null)
+        //     spreadAccuracyValueAdditionalText.gameObject.SetActive(false);
+
+        //Range 
+        SetText(rangeValueText, attackTowerData.rangeData != null
+                ? attackTowerData.rangeData.GetRange().ToString("0.0") : null);
+        
+        var ablityDict = new Dictionary<int, int>();
+        foreach (var abilityId in abilities)
+        {
+            if (ablityDict.TryGetValue(abilityId, out int current))
+            {
+                ablityDict[abilityId] = current + 1;
+            }
+            else
+            {
+                ablityDict[abilityId] = 1;
+            }
+        }
+
+        ResetAdditionalAbilityTexts();
+
+        foreach (var kvp in ablityDict)
+        {
+            int abilityId = kvp.Key;
+            int count = kvp.Value;
+
+            var ability = AbilityManager.GetAbility(abilityId);
+            if (ability == null) continue;
+
+            var total= ability.UpgradeAmount * count;
+            Debug.Log($"AbilityId: {abilityId}, Count: {count}, Total Upgrade Amount: {total}");
+            switch (abilityId)
+            {
+                case (int)AbilityId.Chain:
+                    {
+                        SetStatText(chainValueText, 0, total, "0");
+                        SetAdditionalStatText(chainValueAdditionalText, 0, total, "0");
+                        break;
+                    }
+                case (int)AbilityId.Explosion:
+                    {
+                        var towerId = attackTowerData.towerIdInt;
+                        float baseValue = 0f;
+                        if (towerId == (int)AttackTowerId.Missile)
+                            baseValue = 100f;
+                        SetStatText(explosionValueText, baseValue, total * 100f, "0");
+                        SetAdditionalStatText(explosionValueAdditionalText, baseValue, total * 100f, "0");
+                        break;
+                    }
+                case (int)AbilityId.Split:
+                    {
+                        SetStatText(splitValueText, 0, total, "0");
+                        SetAdditionalStatText(splitValueAdditionalText, 0, total, "0");
+                        break;
+                    }
+                case (int)AbilityId.Pierce:
+                    {
+                        SetStatText(pierceValueText, 0, total, "0");
+                        SetAdditionalStatText(pierceValueAdditionalText, 0, total, "0");
+                        break;
+                    }
+                case (int)AbilityId.Hitscan:
+                    {
+                        if (total > 0)
+                        {
+                            SetText(hitScanValueText, "활성화");
+                        }
+                        else
+                        {
+                            SetText(hitScanValueText, "비활성화");
+                        }
+                        break;
+                    }
+                case (int)AbilityId.Homing:
+                    {
+                        if (total > 0)
+                        {
+                            SetText(homingValueText, "활성화");
+                        }
+                        else
+                        {
+                            SetText(homingValueText, "비활성화");
+                        }
+                        break;
+                    }
+
+            }
+            // Process ability effects on stats if needed
+        }
+    }
+
+    private void ResetAdditionalAbilityTexts()
+    {
+        SetText(chainValueText, "-");
+        SetAdditionalStatText(chainValueAdditionalText, 0, 0, "0");
+        SetText(explosionValueText, "-");
+        SetAdditionalStatText(explosionValueAdditionalText, 0, 0, "0");
+        SetText(splitValueText,  "-");
+        SetAdditionalStatText(splitValueAdditionalText, 0, 0, "0");
+        SetText(pierceValueText, "-");
+        SetAdditionalStatText(pierceValueAdditionalText, 0, 0, "0");
+        SetText(hitScanValueText, "-");
+        SetAdditionalStatText(hitScanValueAdditionalText, 0, 0, "0");
+        SetText(homingValueText, "-");
+        SetAdditionalStatText(homingValueAdditionalText, 0, 0, "0");
+    }
+
+    private void SetAbilityExplainForAttack(TowerAttack attackTower)
+    {
+        var abilities = attackTower.Abilities;
+        if (abilities == null || abilities.Count == 0)
+        {
+            // var text = Instantiate(abilityExplainContent, contentRect);
+            // SetText(text.GetComponent<TextMeshProUGUI>(), "no ability");
+            return;
+        }
+
+        foreach (var abilityId in abilities)
+        {
+            var ability = AbilityManager.GetAbility(abilityId);
+            // var text = Instantiate(abilityExplainContent, contentRect);
+            // SetText(text.GetComponent<TextMeshProUGUI>(), ability?.ToString() ?? "no ability");
+        }
+    }
+
+    private void SetSpecialAbilityForAttackPanel(TowerAttack attackTower)
+    {
+        if(specialRandomRoot !=null)
+        {
+            for (int i = specialRandomRoot.childCount - 1; i >= 0; i--)
+            {
+                Destroy(specialRandomRoot.GetChild(i).gameObject);
+            }
+        }
+        if (attackTower == null) return;
+        var abilities = attackTower.Abilities;
+        if (abilities == null || abilities.Count == 0) return;
+
+        var counts = new Dictionary<int, int>();
+        var ordredIds = new List<int>();
+        for(int i=0; i<abilities.Count; i++)
+        {
+            int abilityId = abilities[i];
+
+            var raRow = DataTableManager.RandomAbilityTable?.Get(abilityId);
+            if (raRow == null) continue;
+            if (!counts.TryGetValue(abilityId, out int current))
+            {
+                counts[abilityId] = 1;
+                ordredIds.Add(abilityId);
+            }
+            else counts[abilityId] = current + 1;
+        }
+        if (ordredIds.Count == 0) return;
+
+        for(int i=0; i<ordredIds.Count; i++)
+        {
+            int abilityId = ordredIds[i];
+            int count = counts[abilityId];
+
+            string displayName = null;
+            var raRow = DataTableManager.RandomAbilityTable?.Get(abilityId);
+            if(raRow!=null&&!string.IsNullOrEmpty(raRow.RandomAbilityName))
+            {
+                displayName = raRow.RandomAbilityName;
+            }
+            else
+            {
+                var ability = AbilityManager.GetAbility(abilityId);
+                if (ability != null) displayName = ability.ToString();
+            }
+
+            string text = (count <= 1) ? displayName : $"{displayName}x{count}";
+            var go = Instantiate(specialRandomBlockPrefab, specialRandomRoot);
+            var abilityInfo = go.GetComponent<TowerAbilityInfoUI>();
+            abilityInfo.SetAbilityInfo(abilityId);
+            // var tmp = go.GetComponentInChildren<TextMeshProUGUI>();
+            // if (tmp != null) tmp.text = text;
+        }
+    }
+
+    private void FillAmplifierTowerInfo(int index, TowerAmplifier amplifierTower)
+    {
+        var ampData = amplifierTower.AmplifierTowerData;
+        var slots = amplifierTower.BuffedSlotIndex;
+
+        if (ampData == null)
+        {
+            if (amplifierNameText != null) amplifierNameText.text = $"Amplifier {index}";
+            SetAllText("no data");
+
+            if (buffSlotInfoText != null) buffSlotInfoText.text = "버프 슬롯 없음";
+            if (randomSlotInfoText != null) randomSlotInfoText.text = "랜덤 슬롯 없음";
+            return;
+        }
+
+        var amplifierTowerTextId = DataTableManager.BuffTowerTable.GetTowerTextIdById(ampData.BuffTowerId);
+        var towerExplainData = DataTableManager.TowerExplainTable.Get(amplifierTowerTextId);
+        var towerName = towerExplainData != null ? towerExplainData.TowerName : "No Name";
+        var towerDescribe = towerExplainData != null ? towerExplainData.TowerDescribe : "No Description";
+
+        // string baseName = !string.IsNullOrEmpty(ampData.BuffTowerName)
+        //     ? ampData.BuffTowerName : $"Amplifier {index}";
+
+        int level = amplifierTower.ReinforceLevel;
+
+        //Name Object
+        if (amplifierNameText != null) amplifierNameText.text = $"{towerName} (Lv.{level})";
+        if (amplifierExplainText != null) amplifierExplainText.text = towerDescribe;
+        SetText(towerIdValueText, $"{towerName} (Lv.{level})");
+
+        //Slot Index Info
+        if (buffSlotInfoText != null)
+        {
+            int selfIndex = amplifierTower.SelfIndex;
+            string buffBlock = FormatOffsetArray(amplifierTower.BuffedSlotIndex, selfIndex);
+            buffSlotInfoText.text = buffBlock;
+        }
+
+        if (randomSlotInfoText != null)
+        {
+            string randomInfo = BuildRandomSlotInfo(amplifierTower);
+            randomSlotInfoText.text = randomInfo;
+        }
+
+        ClearBuffEffectLists();
+        FillBasicBuffEffects(amplifierTower);
+        FillRandomAbilityEffects(amplifierTower);
+
+        // Buff Panel--------------------------------
+        SetText(rangeValueText,
+            !string.IsNullOrEmpty(ampData.BuffTowerName)
+                ? ampData.BuffTowerName
+                : ampData.AmplifierType.ToString());
+
+        SetText(fireRateValueText, ampData.AmplifierType.ToString());
+        SetText(hitRateValueText, ampData.FixedBuffedSlotCount.ToString());
+        SetText(spreadAccuracyValueText,
+            ampData.OnlyAttackTower ? "공격 타워만" : "모든 타워");
+
+        // 공격력% (DamageBuff: add, 0.4 -> +40%)
+        string dmgText = FormatPercentFromAdd(ampData.DamageBuff);
+        SetText(damageValueText, dmgText ?? "-");
+
+        // 공속% (FireRateBuff: mul, 1.2 -> +20%)
+        string fireRateText = FormatPercentFromMul(ampData.FireRateBuff);
+        SetText(fixedPenetrationValueText, fireRateText ?? "-");
+
+        // 투사체 수 +N
+        string projCountText = ampData.ProjectileCountBuff != 0
+            ? $"{ampData.ProjectileCountBuff:+0;-0}"
+            : "-";
+        SetText(percentPenetrationValueText, projCountText);
+
+        // 타겟 수 +N
+        string targetNumText = ampData.TargetNumberBuff != 0
+            ? $"{ampData.TargetNumberBuff:+0;-0}"
+            : "-";
+        SetText(targetNumberValueText, targetNumText);
+
+        // 히트 반경% (HitRadiusBuff: add, 0.25 -> +25%)
+        string hitRadiusText = FormatPercentFromAdd(ampData.HitRadiusBuff);
+        SetText(projectileNumberValueText, hitRadiusText ?? "-");
+
+        // 비율 관통력% (PercentPenetrationBuff: mul, 1.5 -> +50%)
+        string ratePenText = FormatPercentFromMul(ampData.PercentPenetrationBuff);
+        SetText(lifeTimeValueText, ratePenText ?? "-");
+
+        // 고정 관통 +N
+        string fixedPenText = !Mathf.Approximately(ampData.FixedPenetrationBuff, 0f)
+            ? $"{ampData.FixedPenetrationBuff:+0.##;-0.##}"
+            : "-";
+        SetText(projectileSizeValueText, fixedPenText);
+
+        Debug.Log("Filled amplifier buff effects");
+    }
+
+    private void SetAbilityExplainForAmplifier(TowerAmplifier amplifierTower)
+    {
+        var ampData = amplifierTower.AmplifierTowerData;
+        var slots = amplifierTower.BuffedSlotIndex;
+
+        if (ampData == null)
+        {
+            // var textEmpty = Instantiate(abilityExplainContent, contentRect);
+            // SetText(textEmpty.GetComponent<TextMeshProUGUI>(), "no buff");
+            return;
+        }
+
+        var sb = new StringBuilder();
+
+        if (!string.IsNullOrEmpty(ampData.BuffTowerName))
+            sb.AppendLine($"이름: {ampData.BuffTowerName}");
+
+        if (slots != null && slots.Count > 0)
+            sb.AppendLine($"버프 슬롯: {string.Join(", ", slots)}");
+        else
+            sb.AppendLine("버프 슬롯: 없음");
+
+        //random ability
+        var ampAbilities = amplifierTower.Abilities;
+        if (ampAbilities != null && ampAbilities.Count > 0)
+        {
+            int randAbilityId = ampAbilities[0];
+            var raRow = DataTableManager.RandomAbilityTable.Get(randAbilityId);
+            if (raRow != null)
+            {
+                sb.AppendLine();
+                sb.AppendLine($"랜덤 능력: {raRow.RandomAbilityName} (ID: {randAbilityId})");
+
+                int placeType = raRow.PlaceType;
+                int addSlotNum = raRow.AddSlotNum;
+                int duplicateType = raRow.DuplicateType;
+
+                string placeDesc = placeType switch
+                {
+                    0 => "배치타입 0: 증폭 버프 슬롯과 별도 슬롯에 랜덤능력 배치",
+                    1 => "배치타입 1: 기존 증폭 버프 슬롯 중 하나에 랜덤능력 집중",
+                    2 => $"배치타입 2: 기본 버프 슬롯 수가 {addSlotNum}개 증가",
+                    _ => $"배치타입 {placeType}"
+                };
+
+                sb.AppendLine(placeDesc);
+                sb.AppendLine($"중복 타입: {(duplicateType == 0 ? "중첩 가능" : "중첩 불가")}");
+            }
+        }
+
+        //buff data
+        var buffParts = new List<string>();
+
+        if (!Mathf.Approximately(ampData.DamageBuff, 0f))
+            buffParts.Add($"공격력 {FormatPercentFromAdd(ampData.DamageBuff)}");
+        if (!Mathf.Approximately(ampData.FireRateBuff, 1f))
+            buffParts.Add($"공속 {FormatPercentFromMul(ampData.FireRateBuff)}");
+        if (ampData.ProjectileCountBuff != 0)
+            buffParts.Add($"투사체 {ampData.ProjectileCountBuff:+0;-0}");
+        if (ampData.TargetNumberBuff != 0)
+            buffParts.Add($"타겟 수 {ampData.TargetNumberBuff:+0;-0}");
+        if (!Mathf.Approximately(ampData.HitRadiusBuff, 0f))
+            buffParts.Add($"히트 반경 {FormatPercentFromAdd(ampData.HitRadiusBuff)}");
+        if (!Mathf.Approximately(ampData.PercentPenetrationBuff, 1f))
+            buffParts.Add($"관통률 {FormatPercentFromMul(ampData.PercentPenetrationBuff)}");
+        if (!Mathf.Approximately(ampData.FixedPenetrationBuff, 0f))
+            buffParts.Add($"고정 관통 {ampData.FixedPenetrationBuff:+0.##;-0.##}");
+        if (!Mathf.Approximately(ampData.HitRateBuff, 0f))
+            buffParts.Add($"명중률 {ampData.HitRateBuff:+0.##;-0.##}%");
+
+        if (buffParts.Count > 0)
+        {
+            sb.AppendLine();
+            sb.Append(string.Join(", ", buffParts));
+        }
+        else
+        {
+            sb.AppendLine();
+            sb.Append("추가 버프 없음");
+        }
+        // var text = Instantiate(abilityExplainContent, contentRect);
+        // SetText(text.GetComponent<TextMeshProUGUI>(), sb.ToString());
+    }
+
+    // 0.4 -> "+40%"
+    private string FormatPercentFromAdd(float add)
+    {
+        if (Mathf.Approximately(add, 0f)) return null;
+        float p = add * 100f;
+        return $"{p:+0.##;-0.##}%";
+    }
+
+    // 1.2 -> "+20%"
+    private string FormatPercentFromMul(float mul)
+    {
+        if (Mathf.Approximately(mul, 1f)) return null;
+        float p = (mul - 1f) * 100f;
+        return $"{p:+0.##;-0.##}%";
+    }
+    private string FormatOffsetArray(IReadOnlyList<int> targetSlots, int selfIndex)
+    {
+        if (targetSlots == null || targetSlots.Count == 0)
+            return string.Empty;
+
+        if (installControl == null)
+            return string.Empty;
+
+        int towerCount = installControl.TowerCount;
+        if (towerCount <= 1)
+            return string.Empty;
+
+        List<int> rightList = new List<int>();
+        List<int> leftList = new List<int>();
+
+        foreach (int slot in targetSlots)
+        {
+            if (slot < 0) continue;   
+            if (slot == selfIndex) continue; 
+
+            int cw = (slot - selfIndex + towerCount) % towerCount;  
+            int ccw = (selfIndex - slot + towerCount) % towerCount; 
+
+            if (cw == 0 && ccw == 0)
+                continue;
+
+            if (cw <= ccw)
+            {
+                if (cw > 0)
+                    rightList.Add(cw); 
+            }
+            else
+            {
+                if (ccw > 0)
+                    leftList.Add(ccw);    
+            }
+        }
+
+        if (rightList.Count == 0 && leftList.Count == 0)
+            return string.Empty;
+
+        rightList.Sort();
+        leftList.Sort();
+
+        var sb = new System.Text.StringBuilder();
+
+        if (rightList.Count > 0)
+        {
+            var rightPos = new List<string>();
+            foreach (int v in rightList)
+                rightPos.Add($"{v}번째");
+
+            sb.AppendLine($"왼쪽 {string.Join(", ", rightPos)}");
+        }
+
+        if (leftList.Count > 0)
+        {
+            var leftPos = new List<string>();
+            foreach (int v in leftList)
+                leftPos.Add($"{v}번째");
+
+            sb.AppendLine($"오른쪽 {string.Join(", ", leftPos)}");
+        }
+
+        return sb.ToString();
+    }
+
+    private string BuildRandomSlotInfo(TowerAmplifier amp)
+    {
+        if (amp == null) return "-";
+
+        int selfIndex = amp.SelfIndex;
+        var randomSlots = amp.RandomAbilitySlotIndex;
+
+        // 랜덤 능력 이름
+        string abilityName = null;
+        var abilities = amp.Abilities;
+        if (abilities != null && abilities.Count > 0)
+        {
+            int randAbilityId = abilities[0];
+            var raRow = DataTableManager.RandomAbilityTable?.Get(randAbilityId);
+            if (raRow != null)
+                abilityName = raRow.RandomAbilityName;
+        }
+
+        // 슬롯 오프셋 문자열
+        string randomBlock = FormatOffsetArray(randomSlots, selfIndex);
+
+        // 둘 다 없으면
+        if (string.IsNullOrEmpty(abilityName) && string.IsNullOrEmpty(randomBlock))
+            return "랜덤 슬롯 없음";
+
+        // 능력 이름만 있는 경우
+        if (!string.IsNullOrEmpty(abilityName) && string.IsNullOrEmpty(randomBlock))
+            return abilityName;
+
+        // 슬롯 정보만 있는 경우
+        if (string.IsNullOrEmpty(abilityName) && !string.IsNullOrEmpty(randomBlock))
+            return randomBlock;
+
+        // 둘 다 있으면: 카드와 비슷하게 "이름\n슬롯 설명"
+        return $"{randomBlock}";
+    }
+
+    //Buffed List
+    private void ClearBuffEffectLists()
+    {
+        if (basicEffectListRoot != null)
+        {
+            for (int i = basicEffectListRoot.childCount - 1; i >= 0; i--)
+            {
+                Destroy(basicEffectListRoot.GetChild(i).gameObject);
+            }
+        }
+
+        if (randomEffectListRoot != null)
+        {
+            for (int i = randomEffectListRoot.childCount - 1; i >= 0; i--)
+            {
+                Destroy(randomEffectListRoot.GetChild(i).gameObject);
+            }
+        }
+    }
+
+    private void AddEffectLine(RectTransform root, string text)
+    {
+        if (root == null) return;
+        if (effectLinePrefab == null) return;
+        if (string.IsNullOrEmpty(text)) return;
+
+        var go = Instantiate(effectLinePrefab, root);
+        var tmp = go.GetComponentInChildren<TextMeshProUGUI>();
+        Debug.Log(tmp);
+        if (tmp != null)
+            tmp.text = text;
+    }
+
+    private void AddEffectLine(RectTransform root, string text, string baseValue)
+    {
+        if (root == null) return;
+        if (effectLinePrefab == null) return;
+        if (string.IsNullOrEmpty(text)) return;
+
+        var go = Instantiate(effectLinePrefab, root);
+        var abilityInfo = go.GetComponent<TowerAbilityInfoUI>();
+        abilityInfo.SetAbilityInfo(text, baseValue);
+        // var tmp = go.GetComponentInChildren<TextMeshProUGUI>();
+        // Debug.Log(tmp);
+        // if (tmp != null)
+        //     tmp.text = text;
+    }
+
+    private string BuildStatChangeLine(string statName, float delta, string formattedValue)
+    {
+        if (Mathf.Approximately(delta, 0f)) return null;
+
+        string dir = delta > 0f ? "상승" : "하락";
+        return $"{statName} 능력치 {dir} ({formattedValue})";
+    }
+
+    private string BuildStatChangeLine(string statName, float delta)
+    {
+        if (Mathf.Approximately(delta, 0f)) return null;
+
+        string dir = delta > 0f ? "상승" : "하락";
+        return $"{statName} 능력치 {dir}";
+    }
+
+
+    private void FillBasicBuffEffects(TowerAmplifier amplifierTower)
+    {
+        if (basicEffectListRoot == null) return;
+
+        for (int i = basicEffectListRoot.childCount - 1; i >= 0; i--)
+        {
+            Destroy(basicEffectListRoot.GetChild(i).gameObject);
+        }
+
+        if (amplifierTower == null) return;
+
+        var ampData = amplifierTower.AmplifierTowerData;
+        if (ampData == null) return;
+
+        // if (!amplifierTower.HasAppliedBaseBuffs) return;
+       
+        // 공격력 (DamageBuff: add, 0.4 -> +40%)
+        if (!Mathf.Approximately(ampData.DamageBuff, 0f))
+        {
+            float delta = ampData.DamageBuff;
+            string value = FormatPercentFromAdd(delta); // "+40%"
+            string line = BuildStatChangeLine("공격력", delta);
+            AddEffectLine(basicEffectListRoot, line, value);
+        }
+
+        // 공속 (FireRateBuff: mul, 1.2 -> +20%)
+        if (!Mathf.Approximately(ampData.FireRateBuff, 1f))
+        {
+            float delta = ampData.FireRateBuff - 1f;
+            string value = FormatPercentFromMul(ampData.FireRateBuff);
+            string line = BuildStatChangeLine("공격 속도", delta);
+            AddEffectLine(basicEffectListRoot, line, value);
+        }
+
+        // 투사체 수 +N
+        if (ampData.ProjectileCountBuff != 0)
+        {
+            float delta = ampData.ProjectileCountBuff;
+            string value = delta > 0 ? $"+{delta}" : delta.ToString();
+            string line = BuildStatChangeLine("투사체 수", delta);
+            AddEffectLine(basicEffectListRoot, line, value);
+        }
+
+        // 타겟 수 +N
+        if (ampData.TargetNumberBuff != 0)
+        {
+            float delta = ampData.TargetNumberBuff;
+            string value = delta > 0 ? $"+{delta}" : delta.ToString();
+            string line = BuildStatChangeLine("타겟 수", delta);
+            AddEffectLine(basicEffectListRoot, line , value);
+        }
+
+        // 충돌 크기 (HitRadiusBuff: add, 0.25 -> +25%)
+        if (!Mathf.Approximately(ampData.HitRadiusBuff, 0f))
+        {
+            float delta = ampData.HitRadiusBuff;
+            string value = FormatPercentFromAdd(delta);
+            string line = BuildStatChangeLine("충돌 크기", delta);
+            AddEffectLine(basicEffectListRoot, line , value);
+        }
+
+        // 비율 관통력 (PercentPenetrationBuff: add, 0.2 -> +20%)
+        if (!Mathf.Approximately(ampData.PercentPenetrationBuff, 0f))
+        {
+            float delta = ampData.PercentPenetrationBuff; // 0.2 → +20%
+            float percent = delta * 100f;
+            string value = $"{percent:+0.##;-0.##}%";
+            string line = BuildStatChangeLine("비율 관통력", delta);
+            AddEffectLine(basicEffectListRoot, line , value);
+        }
+
+        // 고정 관통 +N
+        if (!Mathf.Approximately(ampData.FixedPenetrationBuff, 0f))
+        {
+            float delta = ampData.FixedPenetrationBuff;
+            string value = delta > 0 ? $"+{delta:0.##}" : $"{delta:0.##}";
+            string line = BuildStatChangeLine("고정\n관통력", delta);
+            AddEffectLine(basicEffectListRoot, line, value);
+        }
+
+        // 명중률 (HitRateBuff: mul, 1.2 -> +20%)
+        if (!Mathf.Approximately(ampData.HitRateBuff, 0f))
+        {
+            float delta = ampData.HitRateBuff;           
+            string value = $"{delta:+0.##;-0.##}%";           
+            string line = BuildStatChangeLine("명중률", delta);
+            AddEffectLine(basicEffectListRoot, line, value);
+        }
+
+        Debug.Log("Filled basic buff effects");
+    }
+
+    private void FillRandomAbilityEffects(TowerAmplifier amplifierTower)
+    {
+        if (randomEffectListRoot == null) return;
+
+        for (int i = randomEffectListRoot.childCount - 1; i >= 0; i--)
+        {
+            Destroy(randomEffectListRoot.GetChild(i).gameObject);
+        }
+
+        if (amplifierTower == null) return;
+
+        var ampData = amplifierTower.AmplifierTowerData;
+        var abilities = amplifierTower.Abilities;
+        if (ampData == null || abilities == null || abilities.Count == 0) return;
+
+        // if (!amplifierTower.HasAppliedRandomAbilities) return;
+
+        foreach (var abilityId in abilities)
+        {
+            var raRow = DataTableManager.RandomAbilityTable?.Get(abilityId);
+            if (raRow == null) continue;
+
+            string abilityName = raRow.RandomAbilityName;
+            float effectValue = raRow.SpecialEffectValue;
+
+            var lines = BuildRandomAbilityStatLines(abilityId, abilityName, effectValue);
+            if (lines == null || lines.Count == 0)
+                continue;
+
+            var abilityLine = lines[0];
+            var formatLine = lines.Count > 1 ? lines[1] : null;
+            AddEffectLine(randomEffectListRoot, abilityLine, formatLine);
+        }
+    }
+
+    private List<string> BuildRandomAbilityStatLines(
+    int abilityId,
+    string abilityName,
+    float effectValue)
+    {
+        var result = new List<string>();
+
+        switch (abilityId)
+        {
+            case 200001: // 공격력%
+                {
+                    string formatted = $"{effectValue:+0;-0}%";
+                    string line = BuildStatChangeLine("공격력", effectValue);
+                    if (line != null) result.Add(line);
+                    if (formatted != null) result.Add(formatted);
+                    break;
+                }
+
+            case 200002: // 공속%
+            case 200017: // 공속% (다른 PlaceType 버전)
+                {
+                    string formatted = $"{effectValue:+0;-0}%";
+                    string line = BuildStatChangeLine("공격 속도", effectValue);
+                    if (line != null) result.Add(line);
+                    if (formatted != null) result.Add(formatted);
+                    break;
+                }
+
+            case 200003: // 비율 관통력
+                {
+                    string formatted = $"{effectValue:+0;-0}%";
+                    string line = BuildStatChangeLine("비율 관통력", effectValue);
+                    if (line != null) result.Add(line);
+                    if (formatted != null) result.Add(formatted);
+                    break;
+                }
+
+            case 200004: // 고정 관통력
+                {
+                    string formatted = $"{effectValue:+0.##;-0.##}";
+                    string line = BuildStatChangeLine("고정 관통력", effectValue);
+                    if (line != null) result.Add(line);
+                    if (formatted != null) result.Add(formatted);
+                    break;
+                }
+
+            case 200005: // 둔화 (이동 속도 감소)
+                {
+                    string formatted = $"{effectValue:+0;-0}%";
+                    string line = BuildStatChangeLine("이동 속도 감소", effectValue);
+                    if (line != null) result.Add(line);
+                    if (formatted != null) result.Add(formatted);
+                    break;
+                }
+
+            case 200006: // 충돌크기
+                {
+                    string formatted = $"{effectValue:+0;-0}%";
+                    string line = BuildStatChangeLine("충돌 크기", effectValue);
+                    if (line != null) result.Add(line);
+                    if (formatted != null) result.Add(formatted);
+                    break;
+                }
+
+            case 200007: // 연쇄
+                {
+                    string formatted = $"{effectValue:+0;-0}";
+                    string line = BuildStatChangeLine("연쇄 횟수", effectValue);
+                    if (line != null) result.Add(line);
+                    if (formatted != null) result.Add(formatted);
+                    break;
+                }
+
+            case 200008: // 폭발
+                {
+                    if (!Mathf.Approximately(effectValue, 0f))
+                    {
+                        string formatted = $"{effectValue:+0;-0}";
+                        string line = BuildStatChangeLine("폭발 효과", effectValue);
+                        if (line != null) result.Add(line);
+                        if (formatted != null) result.Add(formatted);
+                    }
+                    else
+                    {
+                        result.Add("폭발 효과 발동");
+                    }
+                    break;
+                }
+
+            case 200009: // 관통
+                {
+                    string formatted = $"{effectValue:+0;-0}";
+                    string line = BuildStatChangeLine("관통 횟수", effectValue);
+                    if (line != null) result.Add(line);
+                    if (formatted != null) result.Add(formatted);
+                    break;
+                }
+
+            case 200010: // 분열
+                {
+                    string formatted = $"{effectValue:+0;-0}";
+                    string line = BuildStatChangeLine("분열 투사체 수", effectValue);
+                    if (line != null) result.Add(line);
+                    if (formatted != null) result.Add(formatted);
+                    break;
+                }
+
+            case 200011: // 투사체 수
+                {
+                    string formatted = $"{effectValue:+0;-0}";
+                    string line = BuildStatChangeLine("투사체 수", effectValue);
+                    if (line != null) result.Add(line);
+                    if (formatted != null) result.Add(formatted);
+                    break;
+                }
+
+            case 200012: // 타겟 수
+                {
+                    string formatted = $"{effectValue:+0;-0}";
+                    string line = BuildStatChangeLine("타겟 수", effectValue);
+                    if (line != null) result.Add(line);
+                    if (formatted != null) result.Add(formatted);
+                    break;
+                }
+
+            case 200013: // 히트스캔
+                {
+                    result.Add("히트스캔 공격 활성");
+                    break;
+                }
+
+            case 200014: // 유도
+                {
+                    result.Add("유도 탄환 발사");
+                    break;
+                }
+
+            case 200015: // 유지시간
+                {
+                    string formatted = $"{effectValue:+0;-0}초";
+                    string line = BuildStatChangeLine("투사체 유지 시간", effectValue);
+                    if (line != null) result.Add(line);
+                    if (formatted != null) result.Add(formatted);
+                    break;
+                }
+
+            case 200016: // 명중률
+                {
+                    string formatted = $"{effectValue:+0;-0}%";
+                    string line = BuildStatChangeLine("명중률", effectValue);
+                    if (line != null) result.Add(line);
+                    if (formatted != null) result.Add(formatted);
+                    break;
+                }
+
+            default:
+                {
+                    if (!Mathf.Approximately(effectValue, 0f))
+                    {
+                        string formatted = $"{effectValue:+0.##;-0.##}";
+                        string line = BuildStatChangeLine(abilityName, effectValue);
+                        if (line != null) result.Add(line);
+                        if (formatted != null) result.Add(formatted);
+                    }
+                    else
+                    {
+                        if (!string.IsNullOrEmpty(abilityName))
+                            result.Add(abilityName);
+                    }
+                    break;
+                }
+        }
+        return result;
+    }
+    private void DumpAttackDamageDebug(int slotIndex, TowerAttack attackTower, ProjectileData baseProj, ProjectileData buffedProj)
+    {
+        if (attackTower == null) return;
+
+        var td = attackTower.AttackTowerData;
+        if (td == null)
+        {
+            Debug.LogWarning($"[TowerInfoUI][DmgDebug] slot={slotIndex} towerData is null");
+            return;
+        }
+
+        // 원본(테이블)로 세팅된 projectileType (SetTowerData에서 originalProjectileData를 넣고 있음)
+        var tableBase = td.projectileType;
+
+        float tableAtk = tableBase != null ? tableBase.Attack : -1f;
+        float baseAtk = baseProj != null ? baseProj.Attack : -1f;
+        float finalAtk = buffedProj != null ? buffedProj.Attack : -1f;
+
+        float tableToBase = baseAtk - tableAtk;   // 강화(또는 base 재구성)로 변한 흔적
+        float baseToFinal = finalAtk - baseAtk;   // 증폭/능력/업글로 변한 흔적
+        float tableToFinal = finalAtk - tableAtk; // 최종 변화량
+
+        // 기타 같이 보면 좋은 값들
+        float basicFR = attackTower.BasicFireRate;
+        float finalFR = attackTower.CurrentFireRate;
+        int basePC = attackTower.BaseProjectileCount;
+        int finalPC = attackTower.CurrentProjectileCount;
+        float baseHit = td.Accuracy;
+        float finalHit = attackTower.FinalHitRate;
+
+        // 능력 목록도 같이 (개틀링만 초기부터 들어가 있나 확인)
+        var abs = attackTower.Abilities;
+        string abilityList = (abs == null || abs.Count == 0) ? "none" : string.Join(",", abs);
+
+        Debug.Log(
+            $"[TowerInfoUI][DmgDebug] slot={slotIndex} towerIdInt={td.towerIdInt} reinforce={attackTower.ReinforceLevel}\n" +
+            $"  tableAtk={tableAtk:0.###}\n"+
+            $"  baseAtk ={baseAtk:0.###}   Δ(table->base)={tableToBase:0.###}\n" +
+            $"  finalAtk={finalAtk:0.###} Δ(base->final)={baseToFinal:0.###}  Δ(table->final)={tableToFinal:0.###}\n" +
+            $"  FR base={basicFR:0.###} final={finalFR:0.###} | PC base={basePC} final={finalPC} | Hit base={baseHit:0.###} final={finalHit:0.###}\n" +
+            $"  Abilities[{(abs != null ? abs.Count : 0)}]={abilityList}"
+        );
+    }
+    private void DumpAmplifierDamageSources(int slotIndex)
+    {
+        if (installControl == null) return;
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"[TowerInfoUI][AmpSrc] slot={slotIndex} check amplifiers...");
+
+        int count = 0;
+
+        foreach (var amp in installControl.GetAllAmplifiers())
+        {
+            if (amp == null || amp.AmplifierTowerData == null) continue;
+
+            bool inBase = false;
+            bool inRandom = false;
+
+            var baseSlots = amp.BuffedSlotIndex;
+            if (baseSlots != null)
+            {
+                for (int i = 0; i < baseSlots.Count; i++)
+                {
+                    if (baseSlots[i] == slotIndex) { inBase = true; break; }
+                }
+            }
+
+            var randSlots = amp.RandomAbilitySlotIndex;
+            if (randSlots != null)
+            {
+                for (int i = 0; i < randSlots.Count; i++)
+                {
+                    if (randSlots[i] == slotIndex) { inRandom = true; break; }
+                }
+            }
+
+            if (!inBase && !inRandom) continue;
+
+            count++;
+
+            var data = amp.AmplifierTowerData;
+            sb.AppendLine(
+                $"  amp={amp.name} selfIndex={amp.SelfIndex} reinforce={amp.ReinforceLevel} target(base={inBase}, random={inRandom}) " +
+                $"DamageBuff(add)={data.DamageBuff:0.###} FireRateBuff(mul)={data.FireRateBuff:0.###}"
+            );
+        }
+
+        if (count == 0)
+            sb.AppendLine("  (none) this slot is not targeted by any amplifier.");
+
+        Debug.Log(sb.ToString());
+    }
+
+
+}

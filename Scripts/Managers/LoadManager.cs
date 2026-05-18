@@ -1,0 +1,204 @@
+using System.Collections.Generic;
+using Cysharp.Threading.Tasks;
+// using Unity.Android.Gradle.Manifest;
+using UnityEngine;
+using UnityEngine.AddressableAssets;
+
+public class LoadManager : MonoBehaviour
+{
+
+    private Dictionary<int, GameObject> loadedEnemyPrefabs = new Dictionary<int, GameObject>();
+
+    private static Dictionary<string, GameObject> loadedGamePrefabs = new Dictionary<string, GameObject>();
+    private static Dictionary<string, Sprite> loadedGameTextures = new Dictionary<string, Sprite>();
+    private static Dictionary<string, Mesh> loadedMeshes = new Dictionary<string, Mesh>();
+
+    public async UniTask LoadGamePrefabAsync(string labelName)
+    {
+        try
+        {
+            var prefabLoaded = await Addressables.LoadAssetsAsync<GameObject>(labelName).ToUniTask();
+            foreach (var prefab in prefabLoaded)
+            {
+                loadedGamePrefabs.Add(prefab.name, prefab);
+            }
+        }
+        catch (System.Exception)
+        {
+        }
+    }
+
+    public async UniTask LoadGameTextureAsync(string labelName)
+    {
+        try
+        {
+            var spriteLoaded = await Addressables.LoadAssetsAsync<Sprite>(labelName).ToUniTask();
+            foreach (var sprite in spriteLoaded)
+            {
+                loadedGameTextures.Add(sprite.name, sprite);
+            }
+        }
+        catch (System.Exception)
+        {
+        }
+    }
+
+    public async UniTask LoadGameMeshAsync(string labelName)
+    {
+        try
+        {
+            var prefabLoaded = await Addressables.LoadAssetsAsync<GameObject>(labelName).ToUniTask();
+            foreach (var prefab in prefabLoaded)
+            {
+                MeshFilter meshFilter = prefab.GetComponentInChildren<MeshFilter>();
+                if (meshFilter != null && meshFilter.sharedMesh != null)
+                {
+                    loadedMeshes.Add(prefab.name, meshFilter.sharedMesh);
+                }
+            }
+        }
+        catch (System.Exception)
+        {
+        }
+    }
+
+    public static GameObject GetLoadedGamePrefab(string prefabName)
+    {
+        if(loadedGamePrefabs.TryGetValue(prefabName, out GameObject prefab))
+        {
+            var newObj = Instantiate(prefab);
+            return newObj;
+        }
+
+        return null;
+    }
+
+    public static Sprite GetLoadedGameTexture(string textureName)
+    {
+        if(loadedGameTextures.TryGetValue(textureName, out Sprite sprite))
+        {
+            return sprite;
+        }
+
+        return null;
+    }
+
+    public static GameObject GetLoadedGamePrefabOriginal(string prefabName)
+    {
+        if(loadedGamePrefabs.TryGetValue(prefabName, out GameObject prefab))
+        {
+            return prefab;
+        }
+
+        return null;
+    }
+
+    public async UniTask<GameObject> LoadEnemyPrefabAsync(int enemyId)
+    {
+        if (loadedEnemyPrefabs.ContainsKey(enemyId))
+        {
+            return loadedEnemyPrefabs[enemyId];
+        }
+
+        string addressKey = DataTableManager.EnemyTable.Get(enemyId).VisualAsset;
+
+        try
+        {
+            GameObject prefab = await Addressables.LoadAssetAsync<GameObject>(addressKey).ToUniTask();
+            loadedEnemyPrefabs.Add(enemyId, prefab);
+
+            return prefab;
+        }
+        catch(System.Exception)
+        {
+            return null;
+        }
+    }
+
+    public async UniTask LoadEnemyPrefabAsync()
+    {
+        if (loadedEnemyPrefabs.Count > 0)
+        {
+            return;
+        }
+
+        var enemyIds = DataTableManager.EnemyTable.GetEnemyIds();
+        foreach(int enemyId in enemyIds)
+        {
+            string addressKey = DataTableManager.EnemyTable.Get(enemyId).VisualAsset;
+
+            try
+            {
+                GameObject prefab = await Addressables.LoadAssetAsync<GameObject>(addressKey).ToUniTask();
+                loadedEnemyPrefabs.Add(enemyId, prefab);
+            }
+            catch(System.Exception)
+            {
+                
+            }
+        }
+    }
+
+    public GameObject GetLoadedPrefab(int enemyId)
+    {
+        if(loadedEnemyPrefabs.TryGetValue(enemyId, out GameObject prefab))
+        {
+            return prefab;
+        }
+
+        return null;
+    }
+
+    public async UniTask LoadEnemyPrefabsAsync(HashSet<int> enemyIds)
+    {
+        List<UniTask> loadTasks = new List<UniTask>();
+
+        foreach (int enemyId in enemyIds)
+        {
+            if(!loadedEnemyPrefabs.ContainsKey(enemyId))
+            {
+                loadTasks.Add(LoadEnemyPrefabAsync(enemyId));
+            }
+        }
+
+        if(loadTasks.Count > 0)
+        {
+            await UniTask.WhenAll(loadTasks);
+        }
+    }
+
+    public async UniTask<Mesh> LoadMeshFromPrefabAsync(string addressKey)
+    {
+        if (loadedMeshes.TryGetValue(addressKey, out Mesh mesh))
+        {
+            return mesh;
+        }
+
+        try
+        {
+            GameObject prefab = await Addressables.LoadAssetAsync<GameObject>(addressKey).ToUniTask();
+            
+            MeshFilter meshFilter = prefab.GetComponentInChildren<MeshFilter>();
+            if (meshFilter != null && meshFilter.sharedMesh != null)
+            {
+                loadedMeshes.Add(addressKey, meshFilter.sharedMesh);
+                return meshFilter.sharedMesh;
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"Failed to load mesh from {addressKey}: {e}");
+        }
+
+        return null;
+    }
+
+    public static Mesh GetLoadedMesh(string addressKey)
+    {
+        if (loadedMeshes.TryGetValue(addressKey, out Mesh mesh))
+        {
+            return mesh;
+        }
+        return null;
+    }
+}

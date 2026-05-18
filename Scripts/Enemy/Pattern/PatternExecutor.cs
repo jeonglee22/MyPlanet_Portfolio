@@ -1,0 +1,296 @@
+using System.Collections.Generic;
+using System.Threading;
+using Cysharp.Threading.Tasks;
+using UnityEngine;
+
+public class PatternExecutor : MonoBehaviour
+{
+    private Enemy owner;
+    private List<IPattern> patterns = new List<IPattern>();
+    
+    private Dictionary<IPattern, float> patternCooldowns = new Dictionary<IPattern, float>();
+    private Dictionary<IPattern, int> patternRepeatExecutions = new Dictionary<IPattern, int>();
+    private Dictionary<IPattern, float> patternWeights = new Dictionary<IPattern, float>();
+
+    public bool IsPatternLine { get; set; } = false;
+
+    private bool isExecutePattern = false;
+    private CancellationTokenSource patternCts;
+
+    private bool canExecutePattern = false;
+
+    private void OnDisable()
+    {
+        Cancel();
+    }
+
+    private void OnDestroy()
+    {
+        Cancel();
+    }
+
+    private void Start()
+    {
+        if(owner.Data.EnemyType != 3 && owner.Data.EnemyType != 4)
+        {
+            canExecutePattern = true;
+        }
+    }
+
+    public void Initialize(Enemy enemy)
+    {
+        owner = enemy;
+        patterns.Clear();
+        patternCooldowns.Clear();
+        patternRepeatExecutions.Clear();
+        patternWeights.Clear();
+        IsPatternLine = false;
+
+        isExecutePattern = false;
+
+        Cancel();
+    }
+
+    public void OnBossReady() => canExecutePattern = true;
+
+    public void AddPattern(IPattern pattern)
+    {
+        if(pattern == null)
+        {
+            return;
+        }
+
+        patterns.Add(pattern);
+        patternCooldowns[pattern] = 0f;
+        patternRepeatExecutions[pattern] = owner.CurrentPatternData.PatternValue;
+
+        var patternData = pattern.GetPatternData();
+        if(patternData != null)
+        {
+            patternWeights[pattern] = patternData.Weight;
+        }
+    }
+
+    public void RemovePattern(IPattern pattern)
+    {
+        if (pattern == null)
+        {
+            return;
+        }
+
+        patterns.Remove(pattern);
+        patternCooldowns.Remove(pattern);
+        patternRepeatExecutions.Remove(pattern);
+        patternWeights.Remove(pattern);
+
+        Cancel();
+    }
+
+    public void ClearPatterns()
+    {
+        Cancel();
+
+        patterns.Clear();
+        patternCooldowns.Clear();
+        patternRepeatExecutions.Clear();
+        patternWeights.Clear();
+
+        isExecutePattern = false;
+    }
+
+    private void Update()
+    {
+        if(owner == null || owner.IsDead)
+        {
+            Cancel();
+            return;
+        }
+
+        if(owner.Data.EnemyType == 4 && Variables.MiddleBossEnemy != null && !Variables.MiddleBossEnemy.IsDead)
+        {
+            return;
+        }
+
+        if(!canExecutePattern)
+        {
+            return;
+        }
+
+        foreach(var pattern in patterns)
+        {
+            pattern.PatternUpdate();
+        }
+
+        foreach (var pattern in patterns)
+        {
+            if(pattern.Trigger == ExecutionTrigger.Immediate)
+            {
+                ExecutePatternAsync(pattern, patternCts.Token).Forget();
+            }
+        }
+
+        if(isExecutePattern)
+        {
+            return;
+        }
+
+        //Can execute patterns
+        List<IPattern> availablePatterns = new List<IPattern>();
+        List<float> weights = new List<float>();
+
+        bool hasHealthPercentagePattern = false;
+        IPattern healthPercentagePattern = null;
+
+        bool hasOrbitReachedPattern = false;
+        IPattern orbitReachedPattern = null;
+
+        foreach(var pattern in patterns)
+        {
+            if (patternCooldowns.ContainsKey(pattern) && patternCooldowns[pattern] > 0f)
+            {
+                patternCooldowns[pattern] -= Time.deltaTime;
+            }
+
+            if(patternCooldowns[pattern] <= 0f && pattern.CanExecute())
+            {
+                if(pattern.Trigger == ExecutionTrigger.OnOrbitReached)
+                {
+                    hasOrbitReachedPattern = true;
+                    orbitReachedPattern = pattern;
+                    break;
+                }
+
+                if(pattern.Trigger == ExecutionTrigger.OnHealthPercentage)
+                {
+                    hasHealthPercentagePattern = true;
+                    healthPercentagePattern = pattern;
+                    break;
+                }
+
+                availablePatterns.Add(pattern);
+
+                weights.Add(patternWeights[pattern]);
+            }
+        }
+
+        IPattern selectedPattern = hasOrbitReachedPattern ? orbitReachedPattern : hasHealthPercentagePattern ? healthPercentagePattern : SelectPatternWeight(availablePatterns, weights);
+        if(selectedPattern != null)
+        {
+            ExecutePatternAsync(selectedPattern, patternCts.Token).Forget();
+        }
+    }
+
+    public void ResetAllPatterns()
+    {
+        foreach (var pattern in patterns)
+        {
+            pattern.Reset();
+        }
+    }
+
+    public void OnPatternLine()
+    {
+        IsPatternLine = true;
+    }
+
+    private async UniTaskVoid ExecutePatternAsync(IPattern pattern, CancellationToken token)
+    {
+        if(!patternRepeatExecutions.ContainsKey(pattern))
+        {
+            return;
+        }
+
+        var patternData = pattern.GetPatternData();
+        if(patternData == null)
+        {
+            return;
+        }
+
+        int repeatCount = patternRepeatExecutions[pattern];
+        float repeatDelay = patternData.RepeatDelay;
+        float patternDelay = patternData.PatternDelay;
+        float cooltime = patternData.Cooltime;
+
+        isExecutePattern = true;
+
+        try
+        {
+            for(int i = 0; i < repeatCount; i++)
+            {
+                token.ThrowIfCancellationRequested();
+
+                if(pattern.RequireAsync)
+                {
+                    await pattern.ExecuteAsync(token);
+                }
+                else
+                {
+                    pattern.Execute();
+                }
+
+                if(i < repeatCount - 1 && repeatDelay > 0f)
+                {
+                    await UniTask.Delay(System.TimeSpan.FromSeconds(repeatDelay), cancellationToken: token);
+                }
+            }
+
+            if(patternDelay > 0f)
+            {
+                await UniTask.Delay(System.TimeSpan.FromSeconds(patternDelay), cancellationToken: token);
+            }
+
+            if(patternCooldowns.ContainsKey(pattern))
+            {
+                patternCooldowns[pattern] = cooltime;
+            }
+        }
+        catch(System.OperationCanceledException)
+        {
+            
+        }
+        finally
+        {
+            isExecutePattern = false;
+        }
+    }
+
+    private PatternData GetPatternData(IPattern pattern)
+    {
+        return pattern.GetPatternData();
+    }
+
+    private IPattern SelectPatternWeight(List<IPattern> patterns, List<float> weights)
+    {
+        if(patterns.Count == 0)
+        {
+            return null;
+        }
+
+        float totalWeight = 0f;
+        foreach(float weight in weights)
+        {
+            totalWeight += weight;
+        }
+
+        float randomValue = Random.Range(0f, totalWeight);
+        float comparisonWeight = 0f;
+
+        for(int i = 0; i < patterns.Count; i++)
+        {
+            comparisonWeight += weights[i];
+            if(randomValue <= comparisonWeight)
+            {
+                return patterns[i];
+            }
+        }
+
+        return patterns[patterns.Count - 1];
+    }
+
+    public void Cancel()
+    {
+        patternCts?.Cancel();
+        patternCts?.Dispose();
+        patternCts = new CancellationTokenSource();
+    }
+}

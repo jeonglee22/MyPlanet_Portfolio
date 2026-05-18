@@ -1,0 +1,405 @@
+﻿using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class TowerReinforceManager : MonoBehaviour
+{
+    private static TowerReinforceManager _instance;
+    public static TowerReinforceManager Instance
+    {
+        get
+        {
+            if (_instance != null) return _instance;
+            var go = new GameObject("TowerReinforceManager");
+            _instance = go.AddComponent<TowerReinforceManager>();
+            DontDestroyOnLoad(go);
+            return _instance;
+        }
+    }
+
+    [Header("요격 타워 공격력 배율 계수")]
+    [SerializeField] private float attackReinforceScale = 1f;
+
+    [Header("증폭 타워 강화 배율(전체) 계수")]
+    [SerializeField] private float buffReinforceScale = 1f;
+
+    private Dictionary<int, List<TowerReinforceUpgradeRow>> attackGroups =
+        new Dictionary<int, List<TowerReinforceUpgradeRow>>();
+
+    private Dictionary<int, List<BuffTowerReinforceUpgradeRow>> buffGroups =
+        new Dictionary<int, List<BuffTowerReinforceUpgradeRow>>();
+
+    private bool initialized = false;
+
+    [Header("RandomAbility Reinforce Debug")]
+    [SerializeField] private bool validateRandomAbilityReinforceLevel=false;
+    private readonly Dictionary<long, RandomAbilityReinforceSum> randomAbilitySumCache
+        = new Dictionary<long, RandomAbilityReinforceSum>();
+
+    [SerializeField] private bool normalizeRandomAbilityUnits = true;
+    private readonly Dictionary<int, float> randomAbilityUnitScaleCache
+        = new Dictionary<int, float>();
+
+    private void Awake()
+    {
+        if (_instance != null && _instance != this)
+        {
+            Destroy(gameObject);
+            return;
+        }
+        _instance = this;
+        DontDestroyOnLoad(gameObject);
+    }
+
+    //Init
+    private void EnsureInitialized()
+    {
+        if (initialized) return;
+        if (!DataTableManager.IsInitialized) return;
+        initialized = true;
+    }
+
+    //If You Need Calculator ----------------------------------------
+    public float GetAttackAddValue(int groupId, int currentLevel)
+    {
+        EnsureInitialized();
+        if (!initialized) return 0f;
+        if (currentLevel <= 0) return 0f;
+        if (!attackGroups.TryGetValue(groupId, out var rows)) return 0f;
+
+        int clampedLevel = Mathf.Max(0, currentLevel);
+        float sum = 0f;
+        foreach (var row in rows)
+        {
+            if (row.ReinforceUpgradeLevel <= clampedLevel)
+            {
+                sum += row.AddValue;
+            }
+        }
+        return sum * attackReinforceScale;
+    }
+    public static float GetAttackAddValueStatic(int groupId, int currentLevel)
+    {
+        if (Instance == null) return 0f;
+        return Instance.GetAttackAddValue(groupId, currentLevel);
+    }
+    //---------------------------------------------------------------
+
+    //Current Calculator
+    //Reinforce Attack Tower
+    public float GetAttackAddValueByIds(int[] reinforceIds, int currentLevel)
+    {
+        EnsureInitialized();
+        if (!initialized) return 0f;
+        if (reinforceIds == null || reinforceIds.Length == 0) return 0f;
+        if (currentLevel <= 0) return 0f;
+
+        int maxLevel = Mathf.Min(currentLevel, reinforceIds.Length);
+        var table = DataTableManager.TowerReinforceUpgradeTable;
+        if (table == null) return 0f;
+
+        float sum = 0f;
+        for (int i = 0; i < maxLevel; i++)
+        {
+            int id = reinforceIds[i];
+            var row = table.GetById(id);
+            if (row == null) continue;
+            sum += row.AddValue;
+        }
+        return sum * attackReinforceScale;
+    }
+
+    //Reinforce Buff Tower
+    public Dictionary<int, float> GetBuffAddValues(int groupId, int currentLevel)
+    {
+        EnsureInitialized();
+        var result = new Dictionary<int, float>();
+
+        if (!initialized) return result;
+        if (currentLevel <= 0) return result;
+        if (!buffGroups.TryGetValue(groupId, out var rows)) return result;
+
+        int clampedLevel = Mathf.Max(0, currentLevel);
+
+        foreach (var row in rows)
+        {
+            if (row.ReinforceUpgradeLevel > clampedLevel)
+                continue;
+
+            AccumulateEffect(result, row.SpecialEffect1_ID, row.SpecialEffect1AddValue);
+            AccumulateEffect(result, row.SpecialEffect2_ID, row.SpecialEffect2AddValue);
+            AccumulateEffect(result, row.SpecialEffect3_ID, row.SpecialEffect3AddValue);
+        }
+        ApplyScale(result, buffReinforceScale);
+        return result;
+    }
+
+    public Dictionary<int, float> GetBuffAddValuesByIds(int[] reinforceIds, int currentLevel)
+    {
+        EnsureInitialized();
+        var result = new Dictionary<int, float>();
+
+        if (!initialized) return result;
+        if (currentLevel <= 0) return result;
+        if (reinforceIds == null || reinforceIds.Length == 0) return result;
+
+        int clampedLevel = Mathf.Max(0, currentLevel);
+        var table = DataTableManager.BuffTowerReinforceUpgradeTable;
+        if (table == null) return result;
+
+        foreach (var id in reinforceIds)
+        {
+            var row = table.GetById(id);
+            if (row == null) continue;
+            if (row.ReinforceUpgradeLevel > clampedLevel) continue;
+
+            AccumulateEffect(result, row.SpecialEffect1_ID, row.SpecialEffect1AddValue);
+            AccumulateEffect(result, row.SpecialEffect2_ID, row.SpecialEffect2AddValue);
+            AccumulateEffect(result, row.SpecialEffect3_ID, row.SpecialEffect3AddValue);
+        }
+
+        ApplyScale(result, buffReinforceScale);
+        return result;
+    }
+
+    public static Dictionary<int, float> GetBuffAddValuesStatic(int groupId, int currentLevel)
+    {
+        if (Instance == null) return new Dictionary<int, float>();
+        return Instance.GetBuffAddValues(groupId, currentLevel);
+    }
+
+    public static Dictionary<int, float> GetBuffAddValuesByIdsStatic(int[] reinforceIds, int currentLevel)
+    {
+        if (Instance == null) return new Dictionary<int, float>();
+        return Instance.GetBuffAddValuesByIds(reinforceIds, currentLevel);
+    }
+
+    private static void ApplyScale(Dictionary<int,float> dict, float scale)
+    {
+        if (dict == null) return;
+        if (Mathf.Approximately(scale, 1f)) return;
+        var keys = new List<int>(dict.Keys);
+        foreach (var key in keys)
+            dict[key] *= scale;
+    }
+
+    private static void AccumulateEffect(Dictionary<int, float> dict, int effectId, float addValue)
+    {
+        if (effectId == 0) return;
+        if (Mathf.Approximately(addValue, 0f)) return;
+
+        if (dict.TryGetValue(effectId, out var current))
+        {
+            dict[effectId] = current + addValue;
+        }
+        else
+        {
+            dict[effectId] = addValue;
+        }
+    }
+
+    public struct RandomAbilityReinforceSum
+    {
+        public Dictionary<int, float> EffectAdd;
+        public float SuperAdd;
+        public float GetAdd(int effectId)
+        {
+            if (EffectAdd == null) return 0f;
+            return EffectAdd.TryGetValue(effectId, out var v) ? v : 0f;
+        }
+    }
+
+    public RandomAbilityReinforceSum GetRandomAbilityReinforceSumByIds(int[] reinforceUpgradeIds, int reinforceLevel)
+    {
+        EnsureInitialized();
+        var sum = new RandomAbilityReinforceSum
+        {
+            EffectAdd = new Dictionary<int, float>(),
+            SuperAdd = 0f
+        };
+
+        if (!initialized) return sum;
+        if (reinforceLevel <= 0) return sum;
+        if (reinforceUpgradeIds == null || reinforceUpgradeIds.Length == 0) return sum;
+
+        var table = DataTableManager.RandomAbilityReinforceUpgradeTable;
+        if (table == null) return sum;
+
+        int maxLevel = Mathf.Min(reinforceLevel, reinforceUpgradeIds.Length);
+
+        for(int i=0; i<maxLevel; i++)
+        {
+            int upgradeId = reinforceUpgradeIds[i];
+            var row = table.Get(upgradeId);
+            if (row == null) continue;
+            if(validateRandomAbilityReinforceLevel)
+            {
+                int expected = i + 1;
+                if(row.RandomAbilityReinforceUpgradeLevel!=expected)
+                {
+                }
+            }
+            Accumulate(sum.EffectAdd, row.SpecialEffect1_ID, row.SpecialEffect1AddValue);
+            Accumulate(sum.EffectAdd, row.SpecialEffect2_ID, row.SpecialEffect2AddValue);
+            Accumulate(sum.EffectAdd, row.SpecialEffect3_ID, row.SpecialEffect3AddValue);
+
+            if (!Mathf.Approximately(row.SuperSpecialEffectValue, 0f))
+                sum.SuperAdd += row.SuperSpecialEffectValue;
+        }
+        return sum;
+    }
+
+    public RandomAbilityReinforceSum GetRandomAbilityReinforceSumForAbility(int abilityId, int reinforceLevel)
+    {
+        EnsureInitialized();
+        if(reinforceLevel<=0)
+        {
+            return new RandomAbilityReinforceSum
+            {
+                EffectAdd=new Dictionary<int, float>(),
+            };
+        }
+        long key = MakeAbilityLevelKey(abilityId, reinforceLevel);
+        if (randomAbilitySumCache.TryGetValue(key, out var cached))
+            return cached;
+        var raTable = DataTableManager.RandomAbilityTable;
+        var ra = raTable != null ? raTable.Get(abilityId) : null;
+        var computed = new RandomAbilityReinforceSum
+        {
+            EffectAdd = new Dictionary<int, float>(),
+            SuperAdd = 0f
+        };
+        if(!initialized||ra==null)
+        {
+            randomAbilitySumCache[key] = computed;
+            return computed;
+        }
+        var ids = ra.RandomAbilityReinforceUpgrade_ID_Variable;
+        computed = GetRandomAbilityReinforceSumByIds(ids, reinforceLevel);
+        randomAbilitySumCache[key] = computed;
+        return computed;
+    }
+
+    public float GetFinalPrimaryValueForAbility(int abilityId, int reinforceLevel)
+    {
+        var raTable = DataTableManager.RandomAbilityTable;
+        var ra = raTable != null ? raTable.Get(abilityId) : null;
+        if (ra == null) return 0f;
+
+        float baseTableValue = ra.SpecialEffectValue;
+        if (reinforceLevel <= 0) return baseTableValue;
+
+        var sum = GetRandomAbilityReinforceSumForAbility(abilityId, reinforceLevel);
+        float addTableValue = sum.GetAdd(ra.SpecialEffect_ID);
+        float finalTableValue = baseTableValue + addTableValue;
+        return finalTableValue;
+    }
+
+
+    public float GetFinalSuperValueForAbility(int abilityId, int reinforceLevel)
+    {
+        var raTable = DataTableManager.RandomAbilityTable;
+        var ra = raTable != null ? raTable.Get(abilityId) : null;
+        if (ra == null) return 0f;
+
+        float baseValue = ra.SuperSpecialEffectValue;
+        if (reinforceLevel <= 0) return baseValue;
+
+        var sum = GetRandomAbilityReinforceSumForAbility(abilityId, reinforceLevel);
+        return baseValue + sum.SuperAdd;
+    }
+
+    private static void Accumulate(Dictionary<int,float> dict, int effectId, float add)
+    {
+        if (dict == null) return;
+        if (effectId == 0) return;
+        if (Mathf.Approximately(add, 0f)) return;
+        if (dict.TryGetValue(effectId, out var cur))
+            dict[effectId] = cur + add;
+        else 
+            dict[effectId] = add; 
+    }
+
+    private static long MakeAbilityLevelKey(int abilityId, int reinforceLevel)
+    {
+        unchecked
+        {
+            return ((long)abilityId<<32) | (uint)reinforceLevel;
+        }
+    }
+    public Dictionary<int, float> BuildFinalPrimaryValueMap(IEnumerable<int> abilityIds, int reinforceLevel)
+    {
+        var result = new Dictionary<int, float>();
+        foreach (var abilityId in abilityIds)
+        {
+            if (abilityId <= 0) continue;
+            result[abilityId] = GetFinalPrimaryValueForAbility(abilityId, reinforceLevel);
+        }
+        return result;
+    }
+
+    public Dictionary<int, float> BuildFinalSuperValueMap(IEnumerable<int> abilityIds, int reinforceLevel)
+    {
+        var result = new Dictionary<int, float>();
+        foreach (var abilityId in abilityIds)
+        {
+            if (abilityId <= 0) continue;
+            result[abilityId] = GetFinalSuperValueForAbility(abilityId, reinforceLevel);
+        }
+        return result;
+    }
+    public Dictionary<int, RandomAbilityReinforceSum> BuildReinforceSumMap(IEnumerable<int> abilityIds, int reinforceLevel)
+    {
+        var result = new Dictionary<int, RandomAbilityReinforceSum>();
+        foreach (var abilityId in abilityIds)
+        {
+            if (abilityId <= 0) continue;
+            result[abilityId] = GetRandomAbilityReinforceSumForAbility(abilityId, reinforceLevel);
+        }
+        return result;
+    }
+    private float GetRandomAbilityUnitScale(int abilityId)
+    {
+        if (!normalizeRandomAbilityUnits) return 1f;
+
+        if (randomAbilityUnitScaleCache.TryGetValue(abilityId, out var cached))
+            return cached;
+
+        if (!AbilityManager.IsInitialized)
+        {
+            randomAbilityUnitScaleCache[abilityId] = 1f;
+            return 1f;
+        }
+
+        var raTable = DataTableManager.RandomAbilityTable;
+        var ra = raTable != null ? raTable.Get(abilityId) : null;
+        if (ra == null)
+        {
+            randomAbilityUnitScaleCache[abilityId] = 1f;
+            return 1f;
+        }
+
+        float tableBase = ra.SpecialEffectValue;
+        if (Mathf.Approximately(tableBase, 0f))
+        {
+            randomAbilityUnitScaleCache[abilityId] = 1f;
+            return 1f;
+        }
+
+        var baseAbility = AbilityManager.GetAbility(abilityId);
+        if (baseAbility == null)
+        {
+            randomAbilityUnitScaleCache[abilityId] = 1f;
+            return 1f;
+        }
+
+        float internalBase = baseAbility.UpgradeAmount;
+        float scale = internalBase / tableBase;
+
+        if (float.IsNaN(scale) || float.IsInfinity(scale) || Mathf.Approximately(scale, 0f))
+            scale = 1f;
+
+        randomAbilityUnitScaleCache[abilityId] = scale;
+        return scale;
+    }
+}
